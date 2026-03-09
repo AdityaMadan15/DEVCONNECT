@@ -1,0 +1,337 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── CSS Design Tokens ───────────────────────────────────────── */
+:root {
+  /* dark mode defaults (applied when html has .dark class) */
+  --bg-base:      #0a0a14;
+  --bg-surface:   #0f0f1a;
+  --bg-card:      #14141f;
+  --bg-hover:     #1c1c2e;
+  --border:       #2a2a45;
+  --text-primary: #f1f5f9;   /* slate-100 */
+  --text-muted:   #64748b;   /* slate-500 */
+  --text-subtle:  #475569;   /* slate-600 */
+  --scrollbar-track: #0f0f1a;
+  --scrollbar-thumb: #2a2a45;
+}
+
+html.light {
+  --bg-base:      #f1f5f9;
+  --bg-surface:   #ffffff;
+  --bg-card:      #ffffff;
+  --bg-hover:     #f1f5f9;
+  --border:       #e2e8f0;
+  --text-primary: #0f172a;   /* slate-900 */
+  --text-muted:   #64748b;   /* slate-500 */
+  --text-subtle:  #94a3b8;   /* slate-400 */
+  --scrollbar-track: #e2e8f0;
+  --scrollbar-thumb: #cbd5e1;
+}
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    background-image:
+      radial-gradient(ellipse at 20% 20%, rgba(34,211,238,0.06) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 80%, rgba(59,130,246,0.04) 0%, transparent 60%);
+    min-height: 100vh;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  /* light mode body override */
+  html.light body {
+    background-image:
+      radial-gradient(ellipse at 20% 20%, rgba(34,211,238,0.04) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 80%, rgba(59,130,246,0.03) 0%, transparent 60%);
+  }
+
+  /* vertical scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #06b6d4; }
+}
+
+/* ─── Hide horizontal scrollbars on scroll rows ─── */
+.hscroll {
+  overflow-x: auto;
+  scrollbar-width: none;       /* Firefox */
+  -ms-overflow-style: none;    /* IE/Edge */
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+.hscroll::-webkit-scrollbar { display: none; }
+
+/* ─── Scroll row children snap ─── */
+.hscroll > * {
+  scroll-snap-align: start;
+}
+
+/* ─── Section divider ─── */
+.section-divider {
+  border-top: 1px solid var(--border);
+  margin: 0.5rem 0;
+  opacity: 0.4;
+}
+
+@layer components {
+  /* ─── glass effect ─── */
+  .glass {
+    background: rgba(255, 255, 255, 0.02);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  /* ─── glass card ─── */
+  .glass-card {
+    border-radius: 1rem;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    transition: all 0.3s ease-out;
+    backdrop-filter: blur(12px);
+  }
+  html.dark .glass-card {
+    background: linear-gradient(135deg, rgba(20,20,31,0.9) 0%, rgba(14,14,24,0.95) 100%);
+  }
+  html.light .glass-card {
+    background: #ffffff;
+    box-shadow: 0 1px 12px rgba(0,0,0,0.08);
+  }
+  .glass-card:hover {
+    box-shadow: 0 8px 40px rgba(0,0,0,0.55);
+    transform: translateY(-2px);
+    border-color: rgba(34,211,238,0.35);
+  }
+  html.light .glass-card:hover {
+    box-shadow: 0 4px 20px rgba(34,211,238,0.18);
+  }
+
+  /* ─── badge ─── */
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  /* ─── section heading ─── */
+  .section-title {
+    @apply text-lg font-semibold flex items-center gap-2;
+    color: var(--text-primary);
+  }
+  .section-title .icon-wrap {
+    @apply flex items-center justify-center w-8 h-8 rounded-lg;
+  }
+
+  /* ─── avatar ring ─── */
+  .avatar-ring {
+    @apply ring-2 ring-brand-500/50 ring-offset-2;
+    --tw-ring-offset-color: var(--bg-base);
+  }
+
+  /* ─── btn primary ─── */
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium
+           bg-brand-600 text-white
+           hover:bg-brand-500 hover:shadow-glow
+           active:scale-95 transition-all duration-200;
+  }
+
+  /* ─── btn ghost ─── */
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm font-medium
+           active:scale-95 transition-all duration-200;
+    color: var(--text-muted);
+  }
+  .btn-ghost:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  /* ─── input themed ─── */
+  .input-themed {
+    @apply w-full rounded-xl px-3 py-2.5 text-sm outline-none
+           transition-all duration-200;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+  .input-themed:focus {
+    border-color: #06b6d4;
+    box-shadow: 0 0 0 3px rgba(34,211,238,0.15);
+  }
+  .input-themed::placeholder {
+    color: var(--text-subtle);
+  }
+
+  /* ─── panel (right sidebar panels) ─── */
+  .panel {
+    border-radius: 1rem;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    padding: 1rem;
+  }
+  html.dark .panel {
+    background: linear-gradient(135deg, rgba(20,20,31,0.8) 0%, rgba(14,14,24,0.85) 100%);
+  }
+
+  /* ─── progress bar ─── */
+  .progress-bar {
+    @apply h-1.5 rounded-full overflow-hidden;
+    background: var(--border);
+  }
+  .progress-bar-fill {
+    @apply h-full rounded-full transition-all duration-700;
+  }
+}
+
+/* ─── Light mode text overrides (Tailwind slate colors) ─── */
+html.light .text-slate-100 { color: #0f172a !important; }
+html.light .text-slate-200 { color: #1e293b !important; }
+html.light .text-slate-300 { color: #334155 !important; }
+html.light .text-slate-400 { color: #475569 !important; }
+html.light .text-slate-500 { color: #64748b !important; }
+html.light .text-slate-600 { color: #94a3b8 !important; }
+html.light .text-slate-700 { color: #cbd5e1 !important; }
+
+/* ─── Light mode surface overrides ─── */
+html.light .bg-surface        { background-color: #f1f5f9 !important; }
+html.light .bg-surface-card   { background-color: #ffffff !important; }
+html.light .bg-surface-hover  { background-color: #f1f5f9 !important; }
+html.light .bg-\[#0a0a14\]    { background-color: #f1f5f9 !important; }
+html.light .bg-\[#0f0f1a\]    { background-color: #f8faff !important; }
+html.light .bg-\[#14141f\]    { background-color: #ffffff !important; }
+html.light .bg-\[#1c1c2e\]    { background-color: #f1f5f9 !important; }
+html.light .border-surface-border { border-color: #e2e8f0 !important; }
+
+/* sidebar light mode */
+html.light aside {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+/* navbar light mode */
+html.light nav {
+  background: rgba(248,250,255,0.9) !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* ─── Logo button hover: scale + gradient glow ─── */
+.logo-btn {
+  transition: transform 0.28s cubic-bezier(0.34,1.56,0.64,1);
+}
+.logo-btn:hover {
+  transform: scale(1.05);
+}
+.logo-btn:hover .logo-icon {
+  filter: drop-shadow(0 0 8px rgba(34,211,238,0.75))
+          drop-shadow(0 0 20px rgba(59,130,246,0.35));
+}
+.logo-btn:hover .logo-text > span:first-child {
+  color: #e2e8f0;
+}
+
+/* ─── Permanent logo glow ─── */
+.logo-glow-always {
+  filter: drop-shadow(0 0 12px rgba(34,211,238,0.6))
+          drop-shadow(0 0 24px rgba(59,130,246,0.4))
+          drop-shadow(0 0 4px rgba(34,211,238,0.8));
+  animation: logoGlowPulse 3s ease-in-out infinite;
+}
+
+@keyframes logoGlowPulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 12px rgba(34,211,238,0.6))
+            drop-shadow(0 0 24px rgba(59,130,246,0.4))
+            drop-shadow(0 0 4px rgba(34,211,238,0.8));
+  }
+  50% {
+    filter: drop-shadow(0 0 16px rgba(34,211,238,0.8))
+            drop-shadow(0 0 32px rgba(59,130,246,0.6))
+            drop-shadow(0 0 6px rgba(34,211,238,1));
+  }
+}
+
+/* ─── Page transition (fade + slide up) ─── */
+@keyframes pageEnter {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page-transition {
+  animation: pageEnter 0.32s cubic-bezier(0.16,1,0.3,1) forwards;
+}
+
+/* ─── Step form fade-up ─── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fadeUp 0.28s cubic-bezier(0.16,1,0.3,1) forwards;
+}
+
+/* ─── Success checkmark bounce ─── */
+@keyframes bounceOnce {
+  0%   { transform: scale(0.6); opacity: 0; }
+  60%  { transform: scale(1.15); }
+  80%  { transform: scale(0.95); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-bounce-once {
+  animation: bounceOnce 0.6s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+
+/* ─── dropdown slide-down ─── */
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+.dropdown-enter { animation: slideDown 0.22s cubic-bezier(0.16,1,0.3,1) forwards; }
+
+/* ─── Button shimmer sweep ─── */
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+/* ─── Landing page gradient text animation ─── */
+@keyframes gradientShift {
+  0%   { background-position: 0%   50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0%   50%; }
+}
+.animate-gradient-text {
+  background-size: 200% 200%;
+  animation: gradientShift 5s ease infinite;
+}
+
+/* ─── Slide up animation ─── */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Blob animation (floating) ─── */
+@keyframes blob {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(30px, -50px) scale(1.1); }
+  66%      { transform: translate(-20px, 20px) scale(0.9); }
+}
+.animate-blob {
+  animation: blob 20s ease-in-out infinite;
+}
+
+/* ─── Dot grid pattern ─── */
+.dot-grid {
+  background-image: 
+    radial-gradient(circle, rgba(148, 163, 184, 0.15) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
