@@ -61,24 +61,46 @@ export function AuthProvider({ children }) {
     checkAuth();
   }, []);
 
+  // Shared helper: listen for AUTH_SUCCESS from OAuth popup and update state
+  const listenForPopupAuth = () => {
+    const handleMessage = (event) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== 'AUTH_SUCCESS') return;
+      window.removeEventListener('message', handleMessage);
+      const token = localStorage.getItem('authToken');
+      if (token) {
+        fetch(`${API_URL}/auth/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        })
+          .then(res => res.json())
+          .then(data => { if (data.user) setUser(data.user); })
+          .catch(() => {});
+      }
+    };
+    window.addEventListener('message', handleMessage);
+  };
+
   // Login with GitHub
   const loginWithGithub = async () => {
     try {
       setError(null);
       const response = await fetch(`${API_URL}/auth/github`);
       const data = await response.json();
-      
+
       // Open GitHub OAuth in a popup
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
-      
+
       window.open(
         data.url,
         'GitHub Login',
         `width=${width},height=${height},left=${left},top=${top}`
       );
+      listenForPopupAuth();
     } catch (error) {
       console.error('GitHub login failed:', error);
       setError('Failed to initiate GitHub login');
@@ -91,18 +113,19 @@ export function AuthProvider({ children }) {
       setError(null);
       const response = await fetch(`${API_URL}/auth/google`);
       const data = await response.json();
-      
+
       // Open Google OAuth in a popup
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
-      
+
       window.open(
         data.url,
         'Google Login',
         `width=${width},height=${height},left=${left},top=${top}`
       );
+      listenForPopupAuth();
     } catch (error) {
       console.error('Google login failed:', error);
       setError('Failed to initiate Google login');
