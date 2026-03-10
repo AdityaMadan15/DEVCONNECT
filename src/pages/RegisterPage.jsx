@@ -424,6 +424,45 @@ export default function RegisterPage() {
       localStorage.setItem('dc_users', JSON.stringify(users))
       const { password: _pw, ...sessionUser } = user
       localStorage.setItem('dc_user', JSON.stringify(sessionUser))
+
+      // Pre-populate the per-user AppContext storage slot so the profile
+      // isn't blank on the very first login after registration.
+      const appKey = `devconnect_data_local_${form.email}`
+      if (!localStorage.getItem(appKey)) {
+        const joinedDate = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        localStorage.setItem(appKey, JSON.stringify({
+          profile: {
+            name:               form.fullName,
+            username:           '',
+            email:              form.email,
+            bio:                form.bio || '',
+            role:               form.branch ? `${form.branch}${form.year ? ' · ' + form.year : ''}` : '',
+            university:         '',
+            avatar:             null,
+            online:             true,
+            location:           '',
+            joinedDate,
+            profileDescription: '',
+            skills,
+            links: { github: '', linkedin: '', gmail: '', leetcode: '' },
+          },
+          users:         [],
+          projects:      [],
+          collabRequests:[],
+          notifications: [],
+          messages:      [],
+          theme:         'dark',
+          notificationSettings: {
+            collabRequests: true,
+            projectUpdates: true,
+            messages:       true,
+            announcements:  false,
+            emailDigest:    false,
+          },
+        }))
+      }
+
+      window.dispatchEvent(new CustomEvent('dc_local_login'))
       setLoading(null)
       setStep(3)
       setTimeout(() => navigate('/dashboard'), 2500)

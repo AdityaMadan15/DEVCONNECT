@@ -6,6 +6,7 @@ import {
   Users, Shield, Globe, Lock,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
+import { projectsApi } from '../../utils/api'
 
 // ── Category colours ──────────────────────────────────────────────────────────
 const CAT = {
@@ -32,7 +33,7 @@ const STATUS = {
 const VISIBILITY_ICON = { public: Globe, invite: Shield, private: Lock }
 
 export default function ProjectCard({ project, className = '' }) {
-  const { dispatch } = useApp()
+  const { state, dispatch } = useApp()
   const navigate = useNavigate()
   const [addingTeammate, setAddingTeammate] = useState(false)
   const [ghInput, setGhInput]               = useState('')
@@ -54,17 +55,79 @@ export default function ProjectCard({ project, className = '' }) {
   // First letter for the big avatar
   const initial = title.charAt(0).toUpperCase()
 
-  const addTeammate = () => {
+  const addTeammate = async () => {
     const u = ghInput.trim().replace(/^@/, '')
     if (!u || realCollabs.includes(u)) return
     dispatch({ type: 'UPDATE_PROJECT', payload: { id: project.id, collaborators: [...realCollabs, u] } })
     setGhInput('')
     setAddingTeammate(false)
+
+    const invite = {
+      id:           Date.now(),
+      from:         state.profile?.username || 'unknown',
+      to:           u,
+      projectId:    project.id || null,
+      projectTitle: title,
+      message:      `You've been invited to collaborate on "${title}"!`,
+      createdAt:    new Date().toISOString(),
+      status:       'pending',
+      // Only store essential fields — strip messages/resources/activity to save space
+      project: {
+        id: project.id, title: project.title, description: project.description,
+        techStack: project.techStack, status: project.status, visibility: project.visibility,
+        category: project.category, createdAt: project.createdAt, color: project.color,
+        openCollab: project.openCollab, isCollaboration: project.isCollaboration, owner: project.owner,
+        collaborators: [...realCollabs, u],
+      },
+    }
+
+    dispatch({ type: 'ADD_COLLAB_REQUEST', payload: invite })
+    dispatch({
+      type: 'ADD_NOTIFICATION',
+      payload: {
+        id:        Date.now() + 1,
+        type:      'collab_invite',
+        message:   `Collaboration invitation sent to @${u} for "${title}".`,
+        read:      false,
+        createdAt: new Date().toISOString(),
+      },
+    })
+
+    try {
+      const inboxKey = `devconnect_inbox_${u}`
+      const existing = JSON.parse(localStorage.getItem(inboxKey) || '[]')
+      existing.push(invite)
+      localStorage.setItem(inboxKey, JSON.stringify(existing))
+    } catch { /* storage full */ }
+
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/invites/send`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(invite),
+      })
+    } catch (err) {
+      console.error('Real-time delivery failed:', err)
+    }
   }
-  const removeTeammate = (u) =>
-    dispatch({ type: 'UPDATE_PROJECT', payload: { id: project.id, collaborators: realCollabs.filter(c => c !== u) } })
-  const handleDelete = () =>
-    dispatch({ type: 'DELETE_PROJECT', payload: project.id })
+  const removeTeammate = (u) => {
+    const filtered = realCollabs.filter(c => c !== u)
+    dispatch({ type: 'UPDATE_PROJECT', payload: { id: project.id, collaborators: filtered } })
+    projectsApi.update(project.id, { collaborators: filtered })
+  }
+  const handleDelete = () => {
+    if (project.isCollaboration) {
+      // Leave: remove this user from the project's collaborators on backend,
+      // but don't delete the project itself (it belongs to the owner)
+      const myUsername = (state.profile?.username || '').replace(/^@/, '')
+      const updatedCollabs = realCollabs.filter(c => c !== myUsername)
+      dispatch({ type: 'DELETE_PROJECT', payload: project.id })
+      projectsApi.update(project.id, { collaborators: updatedCollabs })
+    } else {
+      dispatch({ type: 'DELETE_PROJECT', payload: project.id })
+      projectsApi.remove(project.id)
+    }
+  }
   
   const handleCardClick = () => {
     if (project.id) {
@@ -110,6 +173,12 @@ export default function ProjectCard({ project, className = '' }) {
                 <span className="text-white/30">·</span>
                 <span className="text-[10px] text-white/50">{cat.icon} {project.category || 'web'}</span>
               </div>
+              {project.isCollaboration && project.owner && (
+                <div className="flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md bg-black/25 w-fit">
+                  <Users size={9} className="text-brand-300" />
+                  <span className="text-[10px] text-brand-300 font-medium">@{project.owner}'s project</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -187,50 +256,66 @@ export default function ProjectCard({ project, className = '' }) {
         </div>
       </div>
 
-      {/* ══ TEAMMATES (real projects only) ══════════════════════════════════ */}
-      {!hasMeta && (
+      {/* ══ TEAMMATES ════════════════════════════════════════════════════════ */}
+      {(true) && (
         <div className="border-t border-white/[0.06] px-5 py-3 bg-white/[0.015]"
              onClick={e => e.stopPropagation()}>
 
           <div className="flex items-center justify-between mb-2">
             <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5 uppercase tracking-widest">
               <Users size={10} />
-              Team {realCollabs.length > 0 && <span className="normal-case tracking-normal text-slate-600">({realCollabs.length})</span>}
+              Team {project.isCollaboration
+                ? <span className="normal-case tracking-normal text-slate-600">(1)</span>
+                : realCollabs.length > 0 && <span className="normal-case tracking-normal text-slate-600">({realCollabs.length})</span>}
             </span>
-            <button
-              onClick={(e) => { e.stopPropagation(); setAddingTeammate(v => !v); setGhInput('') }}
-              className={`flex items-center gap-1 text-[11px] font-medium transition-all duration-150
-                         ${addingTeammate
-                           ? 'text-slate-500 hover:text-slate-300'
-                           : 'text-brand-400 hover:text-brand-300'}`}
-            >
-              {addingTeammate ? <X size={11} /> : <UserPlus size={11} />}
-              {addingTeammate ? 'Cancel' : 'Invite'}
-            </button>
+            {!project.isCollaboration && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setAddingTeammate(v => !v); setGhInput('') }}
+                className={`flex items-center gap-1 text-[11px] font-medium transition-all duration-150
+                           ${addingTeammate
+                             ? 'text-slate-500 hover:text-slate-300'
+                             : 'text-brand-400 hover:text-brand-300'}`}
+              >
+                {addingTeammate ? <X size={11} /> : <UserPlus size={11} />}
+                {addingTeammate ? 'Cancel' : 'Invite'}
+              </button>
+            )}
           </div>
 
           {/* Teammate chips */}
-          {realCollabs.length > 0 && (
+          {project.isCollaboration ? (
+            // Collab view: show the owner as the team member
             <div className="flex flex-wrap gap-1.5 mb-2">
-              {realCollabs.map(u => (
-                <span key={u}
-                  className="group/chip flex items-center gap-1.5 pl-1.5 pr-1 py-0.5 rounded-full
-                             bg-brand-500/10 border border-brand-500/20 text-brand-300 text-[11px]">
-                  <Github size={9} className="text-brand-400" />
-                  <span>@{u}</span>
-                  <button onClick={(e) => { e.stopPropagation(); removeTeammate(u) }}
-                    className="w-3.5 h-3.5 rounded-full flex items-center justify-center
-                               opacity-0 group-hover/chip:opacity-100 hover:bg-red-500/20
-                               hover:text-red-400 transition-all">
-                    <X size={8} />
-                  </button>
-                </span>
-              ))}
+              <span className="flex items-center gap-1.5 pl-1.5 pr-2 py-0.5 rounded-full
+                               bg-brand-500/10 border border-brand-500/20 text-brand-300 text-[11px]">
+                <Github size={9} className="text-brand-400" />
+                <span>@{project.owner}</span>
+              </span>
             </div>
-          )}
-
-          {realCollabs.length === 0 && !addingTeammate && (
-            <p className="text-[11px] text-slate-700 italic mb-1">No teammates yet — invite via GitHub username</p>
+          ) : (
+            <>
+              {realCollabs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {realCollabs.map(u => (
+                    <span key={u}
+                      className="group/chip flex items-center gap-1.5 pl-1.5 pr-1 py-0.5 rounded-full
+                                 bg-brand-500/10 border border-brand-500/20 text-brand-300 text-[11px]">
+                      <Github size={9} className="text-brand-400" />
+                      <span>@{u}</span>
+                      <button onClick={(e) => { e.stopPropagation(); removeTeammate(u) }}
+                        className="w-3.5 h-3.5 rounded-full flex items-center justify-center
+                                   opacity-0 group-hover/chip:opacity-100 hover:bg-red-500/20
+                                   hover:text-red-400 transition-all">
+                        <X size={8} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {realCollabs.length === 0 && !addingTeammate && (
+                <p className="text-[11px] text-slate-700 italic mb-1">No teammates yet — invite via GitHub username</p>
+              )}
+            </>
           )}
 
           {addingTeammate && (
@@ -257,7 +342,7 @@ export default function ProjectCard({ project, className = '' }) {
       )}
 
       {/* ══ FOOTER — actions ═════════════════════════════════════════════════ */}
-      {!hasMeta && (
+      {(true) && (
         <div className="border-t border-white/[0.06] px-4 py-2.5 flex items-center justify-between
                         bg-black/20"
              onClick={e => e.stopPropagation()}>
@@ -281,11 +366,11 @@ export default function ProjectCard({ project, className = '' }) {
                          transition-all duration-200 active:scale-95"
             >
               <Trash2 size={11} className="group-hover/del:rotate-12 transition-transform duration-200" />
-              Delete
+              {project.isCollaboration ? 'Leave' : 'Delete'}
             </button>
           ) : (
             <div className="flex items-center gap-2">
-              <span className="text-[11px] text-slate-500">Remove project?</span>
+              <span className="text-[11px] text-slate-500">{project.isCollaboration ? 'Leave project?' : 'Remove project?'}</span>
               <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(false) }}
                 className="px-2.5 py-1 rounded-lg text-[11px] text-slate-500 hover:text-slate-300
                            bg-white/[0.04] border border-white/[0.08] transition-all hover:bg-white/[0.07]">

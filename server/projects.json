@@ -1,0 +1,25 @@
+{
+  "projects": [
+    {
+      "id": 1773094607219,
+      "title": "Ani",
+      "description": "Ani,Maddy,Dikshita",
+      "techStack": [
+        "React"
+      ],
+      "category": "web",
+      "visibility": "public",
+      "openCollab": true,
+      "collaborators": [
+        "AnantikaSoni"
+      ],
+      "status": "active",
+      "createdAt": "2026-03-09T22:16:47.219Z",
+      "owner": "AdityaMadan15",
+      "stars": 0,
+      "messages": [],
+      "resources": [],
+      "activity": []
+    }
+  ]
+}

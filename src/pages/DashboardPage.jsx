@@ -42,6 +42,7 @@ export default function DashboardPage() {
     setLogging(true)
     setTimeout(() => {
       localStorage.removeItem('dc_user')
+      window.dispatchEvent(new CustomEvent('dc_local_login'))
       navigate('/login', { replace: true })
     }, 900)
   }

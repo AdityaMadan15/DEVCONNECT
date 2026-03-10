@@ -68,6 +68,7 @@ export default function Sidebar({ open, onClose }) {
     onClose?.()
     await logout()
     localStorage.removeItem('dc_user')
+    window.dispatchEvent(new CustomEvent('dc_local_login'))
     navigate('/')
   }
 

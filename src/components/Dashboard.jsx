@@ -10,6 +10,7 @@ import { useApp, getInitials } from '../context/AppContext'
 import { useAuth } from '../context/AuthContext'
 import InviteCollaborators from './InviteCollaborators'
 import ProjectCard from './cards/ProjectCard'
+import { requestsApi } from '../utils/api'
 import DashboardActivityGraph from './DashboardActivityGraph'
 
 // ─── Greeting helper ──────────────────────────────────────────────────────────
@@ -94,9 +95,21 @@ function EmptyState({ icon: Icon, title, sub, action, actionLabel }) {
 
 // ─── Collab Request Item ──────────────────────────────────────────────────────
 function RequestItem({ request }) {
-  const { dispatch } = useApp()
-  const accept  = () => dispatch({ type: 'UPDATE_COLLAB_REQUEST', payload: { id: request.id, status: 'accepted' } })
-  const decline = () => dispatch({ type: 'UPDATE_COLLAB_REQUEST', payload: { id: request.id, status: 'declined' } })
+  const { state, dispatch } = useApp()
+  const accept = () => {
+    dispatch({ type: 'UPDATE_COLLAB_REQUEST', payload: { id: request.id, status: 'accepted' } })
+    requestsApi.update(request.id, { status: 'accepted' })
+    if (request.project) {
+      const alreadyHave = state.projects.some(p => p.id === request.project.id)
+      if (!alreadyHave) {
+        dispatch({ type: 'ADD_PROJECT', payload: { ...request.project, isCollaboration: true, owner: request.from } })
+      }
+    }
+  }
+  const decline = () => {
+    dispatch({ type: 'UPDATE_COLLAB_REQUEST', payload: { id: request.id, status: 'declined' } })
+    requestsApi.update(request.id, { status: 'declined' })
+  }
 
   return (
     <div className="rounded-xl border border-surface-border/60 p-3 bg-surface-hover/30 space-y-2">
@@ -127,7 +140,7 @@ export default function Dashboard() {
 
   const [inviteOpen, setInviteOpen] = useState(false)
 
-  const pendingCollabs  = collabRequests.filter(r => r.status === 'pending')
+  const pendingCollabs  = collabRequests.filter(r => r.status === 'pending' && r.to === profile.username)
   const unreadNotifs    = notifications.filter(n => !n.read)
   const recentProjects  = projects.slice(0, 6)
   const recentActivity  = notifications.slice(0, 5)

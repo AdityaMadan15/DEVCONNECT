@@ -41,13 +41,26 @@ export function AuthProvider({ children }) {
         // the right per-user localStorage key and show their data offline
         console.error('Auth check failed (server may be offline):', error);
         try {
-          const sessionData = JSON.parse(atob(token));
-          if (sessionData.githubId || sessionData.googleId) {
+          // Try JWT format first (header.payload.signature)
+          let sessionData = null
+          const parts = token.split('.')
+          if (parts.length === 3) {
+            try {
+              const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+              const padded = b64 + '='.repeat((4 - b64.length % 4) % 4)
+              sessionData = JSON.parse(atob(padded))
+            } catch { /* not a JWT */ }
+          }
+          // Fallback: try whole token as plain base64 JSON
+          if (!sessionData) {
+            sessionData = JSON.parse(atob(token))
+          }
+          if (sessionData && (sessionData.githubId || sessionData.googleId)) {
             setUser({
               githubId: sessionData.githubId || null,
               googleId: sessionData.googleId || null,
               username: sessionData.username || null,
-              offline: true, // flag: server was unreachable, partial data only
+              offline: true,
             });
           }
         } catch {

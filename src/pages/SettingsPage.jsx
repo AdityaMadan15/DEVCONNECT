@@ -5,6 +5,8 @@ import {
   Github, Linkedin, Mail, Code2,
 } from 'lucide-react'
 import { useApp, getInitials, getEffectiveAvatar } from '../context/AppContext'
+import { useAuth } from '../context/AuthContext'
+import { usersApi } from '../utils/api'
 
 // ─── Tab Button ───────────────────────────────────────────────────────────────
 function Tab({ active, onClick, icon: Icon, label }) {
@@ -68,6 +70,7 @@ function Toast({ message, type = 'success' }) {
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
 function ProfileTab() {
   const { state, dispatch } = useApp()
+  const { user: authUser } = useAuth()
   const profile = state.profile
   const fileRef = useRef(null)
 
@@ -145,6 +148,13 @@ function ProfileTab() {
   const handleSave = () => {
     const username = form.username.startsWith('@') ? form.username : form.username ? `@${form.username}` : ''
     dispatch({ type: 'UPDATE_PROFILE', payload: { ...form, username } })
+    if (authUser?.id) {
+      usersApi.update(authUser.id, {
+        name:      form.name,
+        bio:       form.bio,
+        githubUrl: form.links?.github || '',
+      })
+    }
     showToast('Profile saved successfully!')
   }
 
@@ -392,16 +402,22 @@ function AppearanceTab() {
 
 // ─── Notifications Tab ────────────────────────────────────────────────────────
 function NotificationsTab() {
-  const [settings, setSettings] = useState({
+  const { state, dispatch } = useApp()
+  const settings = state.notificationSettings || {
     collabRequests: true,
     projectUpdates: true,
     messages:       true,
     announcements:  false,
     emailDigest:    false,
-  })
+  }
   const [toast, setToast] = useState(null)
 
-  const toggle = (key) => setSettings(s => ({ ...s, [key]: !s[key] }))
+  const toggle = (key) => {
+    dispatch({
+      type: 'SET_NOTIFICATION_SETTINGS',
+      payload: { [key]: !settings[key] },
+    })
+  }
 
   const items = [
     { key: 'collabRequests', label: 'Collaboration Requests',  sub: 'When someone invites you to collaborate' },
@@ -426,8 +442,8 @@ function NotificationsTab() {
                 className={`relative w-11 h-6 rounded-full transition-colors duration-200
                             ${settings[item.key] ? 'bg-brand-500' : 'bg-surface-border'}`}
               >
-                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200
-                                  ${settings[item.key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200
+                                  ${settings[item.key] ? 'translate-x-5' : 'translate-x-0'}`} />
               </button>
             </div>
           ))}
@@ -456,8 +472,28 @@ function PrivacyTab() {
     if (!form.current) { setToast({ message: 'Enter current password.', type: 'error' }); return }
     if (form.next.length < 8) { setToast({ message: 'New password must be 8+ chars.', type: 'error' }); return }
     if (form.next !== form.confirm) { setToast({ message: 'Passwords do not match.', type: 'error' }); return }
+
+    // OAuth users don't have a password stored locally
+    const dcUser = (() => { try { return JSON.parse(localStorage.getItem('dc_user') || 'null') } catch { return null } })()
+    if (!dcUser?.email) {
+      setToast({ message: 'Password change is not available for OAuth accounts.', type: 'error' })
+      return
+    }
+
+    const users = JSON.parse(localStorage.getItem('dc_users') || '[]')
+    const idx = users.findIndex(u => u.email === dcUser.email && !u.provider)
+    if (idx === -1) {
+      setToast({ message: 'Account not found. Please re-register.', type: 'error' })
+      return
+    }
+    if (users[idx].password !== form.current) {
+      setToast({ message: 'Current password is incorrect.', type: 'error' })
+      return
+    }
+    users[idx].password = form.next
+    localStorage.setItem('dc_users', JSON.stringify(users))
     setForm({ current: '', next: '', confirm: '' })
-    setToast({ message: 'Password updated!', type: 'success' })
+    setToast({ message: 'Password updated successfully!', type: 'success' })
     setTimeout(() => setToast(null), 2500)
   }
 

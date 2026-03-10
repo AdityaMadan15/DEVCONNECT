@@ -351,6 +351,7 @@ export default function LoginPage() {
       }
       const { password: _pw, ...sessionUser } = match
       localStorage.setItem('dc_user', JSON.stringify(sessionUser))
+      window.dispatchEvent(new CustomEvent('dc_local_login'))
       setLoading(null)
       navigate('/dashboard')
     }, 1200)

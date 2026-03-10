@@ -17,6 +17,7 @@ import {
   UserPlus,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { projectsApi, requestsApi } from '../utils/api'
 
 // ── Tech-stack suggestions ────────────────────────────────────────────────────
 const TECH_OPTIONS = [
@@ -263,8 +264,8 @@ function StepTechStack({ data, onChange }) {
             ${data.openCollab ? 'bg-brand-500' : 'bg-surface-hover border border-surface-border'}`}
         >
           <span
-            className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-300
-              ${data.openCollab ? 'translate-x-5' : 'translate-x-0.5'}`}
+            className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-all duration-300
+              ${data.openCollab ? 'translate-x-5' : 'translate-x-0'}`}
           />
         </button>
       </div>
@@ -453,9 +454,9 @@ function StepReview({ data }) {
 
 // ── Main Create Project Page ──────────────────────────────────────────────────
 export default function CreateProject() {
-  const navigate     = useNavigate()
-  const { dispatch } = useApp()
-  const onBack       = () => navigate(-1)
+  const navigate          = useNavigate()
+  const { state, dispatch } = useApp()
+  const onBack            = () => navigate(-1)
   const TOTAL_STEPS  = 4
   const [step, setStep] = useState(0)
   const [dir,  setDir]  = useState(1)   // 1 = forward, -1 = back
@@ -479,7 +480,8 @@ export default function CreateProject() {
       setDir(1)
       setStep(s => s + 1)
     } else {
-      // Persist to AppContext → localStorage
+      // Persist to AppContext → localStorage, and to backend
+      const senderUsername = state.profile?.username || 'unknown'
       const newProject = {
         id:            Date.now(),
         title:         form.name.trim(),
@@ -491,8 +493,10 @@ export default function CreateProject() {
         collaborators: form.collaborators,
         status:        'active',
         createdAt:     new Date().toISOString(),
+        owner:         senderUsername,
       }
       dispatch({ type: 'ADD_PROJECT', payload: newProject })
+      projectsApi.create(newProject)
       dispatch({
         type: 'ADD_NOTIFICATION',
         payload: {
@@ -503,6 +507,46 @@ export default function CreateProject() {
           createdAt: new Date().toISOString(),
         },
       })
+
+      // Send collab invites to every teammate added in the wizard
+      form.collaborators.forEach((collab, i) => {
+        const invite = {
+          id:           Date.now() + 10 + i,
+          from:         senderUsername,
+          to:           collab,
+          projectId:    newProject.id,
+          projectTitle: newProject.title,
+          message:      `You've been invited to collaborate on "${newProject.title}"!`,
+          createdAt:    new Date().toISOString(),
+          status:       'pending',
+          project: {
+            id:           newProject.id,
+            title:        newProject.title,
+            description:  newProject.description,
+            techStack:    newProject.techStack,
+            status:       newProject.status,
+            visibility:   newProject.visibility,
+            category:     newProject.category,
+            createdAt:    newProject.createdAt,
+            openCollab:   newProject.openCollab,
+            collaborators: newProject.collaborators,
+          },
+        }
+        dispatch({ type: 'ADD_COLLAB_REQUEST', payload: invite })
+        requestsApi.create(invite)
+        try {
+          const inboxKey = `devconnect_inbox_${collab}`
+          const existing = JSON.parse(localStorage.getItem(inboxKey) || '[]')
+          existing.push(invite)
+          localStorage.setItem(inboxKey, JSON.stringify(existing))
+        } catch { /* ignore storage errors */ }
+        fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/invites/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(invite),
+        }).catch(() => {})
+      })
+
       setDone(true)
     }
   }

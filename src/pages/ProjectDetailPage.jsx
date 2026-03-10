@@ -8,6 +8,7 @@ import {
   CheckCircle2, Upload, Send, TrendingUp, Eye, Trash2, RefreshCw
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { projectsApi, requestsApi } from '../utils/api'
 
 const STATUS_CONFIG = {
   active: { label: 'Active', pulse: 'bg-emerald-400', ring: 'ring-emerald-400/30', text: 'text-emerald-300', bg: 'bg-emerald-500/10' },
@@ -46,6 +47,20 @@ export default function ProjectDetailPage() {
 
   // Try both string and number comparison since IDs might be stored differently
   const project = state.projects.find(p => p.id === projectId || p.id === parseInt(projectId) || String(p.id) === projectId)
+
+  // Show a loading screen while localStorage data is still being read.
+  // state.ready becomes true only after the LOAD effect fires and finishes.
+  // This prevents a false "Project not found" flash during the brief startup window.
+  if (!state.ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+        <div className="text-center space-y-4">
+          <div className="w-10 h-10 border-4 border-brand-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-slate-400">Loading project…</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!project) {
     return (
@@ -93,6 +108,25 @@ export default function ProjectDetailPage() {
       dispatch({ type: 'STAR_PROJECT', payload: project.id })
       addActivity('starred the project')
     }
+
+    // Write the updated star count directly to the shared slot RIGHT NOW,
+    // synchronously inside the click handler, so the storage event fires in
+    // the other user's tab immediately — before React's useEffect chain runs.
+    // The persist effect will also write later (with Math.max) so no double-count.
+    try {
+      const slotKey = `devconnect_shared_project_${project.id}`
+      const raw = localStorage.getItem(slotKey)
+      const existing = raw ? JSON.parse(raw) : {}
+      // Compute the new total from the current project.stars (pre-toggle) + delta
+      const currentShared = existing.stars || 0
+      const currentLocal  = project.stars  || 0
+      const baseline = Math.max(currentShared, currentLocal)
+      const newStars  = starred
+        ? Math.max(baseline - 1, 0)   // un-starring
+        : baseline + 1                 // starring
+      localStorage.setItem(slotKey, JSON.stringify({ ...existing, stars: newStars }))
+      projectsApi.update(project.id, { stars: newStars })
+    } catch { /* ignore storage errors */ }
   }
 
   const handleSendMessage = () => {
@@ -112,6 +146,7 @@ export default function ProjectDetailPage() {
       type: 'ADD_PROJECT_MESSAGE',
       payload: { projectId: project.id, message: newMessage }
     })
+    projectsApi.update(project.id, { messages: [...messages, newMessage] })
 
     addActivity(`posted a message`)
     setMessageInput('')
@@ -152,6 +187,9 @@ export default function ProjectDetailPage() {
         type: 'ADD_PROJECT_RESOURCE',
         payload: { projectId: project.id, resource: newResource }
       })
+      // eslint-disable-next-line no-unused-vars
+      const { fileData: _fd, ...resourceMeta } = newResource
+      projectsApi.update(project.id, { resources: [...resources.map(r => { const {fileData: _f, ...m} = r; return m }), resourceMeta] })
 
       addActivity(`uploaded ${file.name}`)
     }
@@ -169,6 +207,7 @@ export default function ProjectDetailPage() {
       type: 'UPDATE_PROJECT',
       payload: { id: project.id, resources: updatedResources }
     })
+    projectsApi.update(project.id, { resources: updatedResources.map(r => { const {fileData: _f, ...m} = r; return m }) })
 
     addActivity('deleted a resource')
   }
@@ -211,6 +250,7 @@ export default function ProjectDetailPage() {
           type: 'UPDATE_PROJECT',
           payload: { id: project.id, resources: updatedResources }
         })
+        projectsApi.update(project.id, { resources: updatedResources.map(r => { const {fileData: _f, ...m} = r; return m }) })
 
         addActivity(`re-uploaded ${file.name}`)
       }
@@ -219,30 +259,69 @@ export default function ProjectDetailPage() {
     input.click()
   }
 
-  const handleInviteCollaborator = () => {
+  const handleInviteCollaborator = async () => {
     if (!inviteEmail.trim()) return
+
+    const u = inviteEmail.trim().replace(/^@/, '')
 
     // Add to collaborators list
     dispatch({
       type: 'ADD_PROJECT_COLLABORATOR',
-      payload: { projectId: project.id, collaborator: inviteEmail }
+      payload: { projectId: project.id, collaborator: u }
     })
+    projectsApi.update(project.id, { collaborators: [...collaborators, u] })
 
-    addActivity(`invited ${inviteEmail} to collaborate`)
+    const invite = {
+      id:           Date.now(),
+      from:         state.profile?.username || 'unknown',
+      to:           u,
+      projectId:    project.id || null,
+      projectTitle: projectName,
+      message:      `You've been invited to collaborate on "${projectName}"!`,
+      createdAt:    new Date().toISOString(),
+      status:       'pending',
+      project:      project ? {
+        id: project.id, title: project.title, description: project.description,
+        techStack: project.techStack, status: project.status, visibility: project.visibility,
+        category: project.category, createdAt: project.createdAt, color: project.color,
+        openCollab: project.openCollab, collaborators: project.collaborators,
+      } : null,
+    }
+
+    dispatch({ type: 'ADD_COLLAB_REQUEST', payload: invite })
+    requestsApi.create(invite)
+
+    addActivity(`invited ${u} to collaborate`)
     setInviteEmail('')
     setShowInviteModal(false)
 
-    // Also create a success notification
     dispatch({
       type: 'ADD_NOTIFICATION',
       payload: {
-        id: Date.now(),
-        type: 'success',
-        message: `Invitation sent to ${inviteEmail}`,
+        id: Date.now() + 1,
+        type: 'collab_invite',
+        message: `Collaboration invitation sent to @${u} for "${projectName}".`,
         read: false,
         createdAt: new Date().toISOString()
       }
     })
+
+    try {
+      const inboxKey = `devconnect_inbox_${invite.to}`
+      const existing = JSON.parse(localStorage.getItem(inboxKey) || '[]')
+      existing.push(invite)
+      localStorage.setItem(inboxKey, JSON.stringify(existing))
+    } catch { /* storage full */ }
+
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/invites/send`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(invite),
+      })
+    } catch (err) {
+      console.error('Real-time delivery failed:', err)
+    }
   }
 
   const handleEditProject = () => {
@@ -253,6 +332,7 @@ export default function ProjectDetailPage() {
       type: 'UPDATE_PROJECT',
       payload: { id: project.id, title: newTitle }
     })
+    projectsApi.update(project.id, { title: newTitle })
 
     addActivity(`renamed project to "${newTitle}"`)
   }
@@ -271,6 +351,7 @@ export default function ProjectDetailPage() {
       type: 'ADD_PROJECT_ACTIVITY',
       payload: { projectId: project.id, activity: newActivity }
     })
+    projectsApi.update(project.id, { activity: [newActivity, ...(project.activity || [])] })
   }
   
   const stats = [
@@ -312,6 +393,15 @@ export default function ProjectDetailPage() {
                   </div>
                   <div className="flex-1">
                     <h1 className="text-3xl font-bold text-white mb-2">{projectName}</h1>
+                    {project.isCollaboration && project.owner && (
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-500/15 border border-brand-500/25">
+                          <Users size={12} className="text-brand-400" />
+                          <span className="text-xs text-brand-300 font-medium">@{project.owner}'s project</span>
+                        </div>
+                        <span className="text-xs text-slate-500 italic">You're a collaborator</span>
+                      </div>
+                    )}
                     <p className="text-slate-400 text-lg">{project.description}</p>
                   </div>
                 </div>
@@ -352,25 +442,29 @@ export default function ProjectDetailPage() {
 
               {/* Right: Actions */}
               <div className="flex flex-wrap lg:flex-col gap-3">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={() => setShowInviteModal(true)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium shadow-lg shadow-cyan-500/25 transition-all"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  Invite
-                </motion.button>
+                {!project.isCollaboration && (
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setShowInviteModal(true)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium shadow-lg shadow-cyan-500/25 transition-all"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    Invite
+                  </motion.button>
+                )}
 
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={handleEditProject}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 transition-all"
-                >
-                  <Edit3 className="w-4 h-4" />
-                  Edit
-                </motion.button>
+                {!project.isCollaboration && (
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={handleEditProject}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 transition-all"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    Edit
+                  </motion.button>
+                )}
 
                 <motion.button
                   whileHover={{ scale: 1.05 }}
@@ -450,7 +544,14 @@ export default function ProjectDetailPage() {
             transition={{ duration: 0.3 }}
           >
             {activeTab === 'overview' && <OverviewTab project={project} techStack={techStack} />}
-            {activeTab === 'team' && <TeamTab collaborators={collaborators} projectOwner={state.profile} />}
+            {activeTab === 'team' && (
+              <TeamTab
+                collaborators={collaborators}
+                projectOwner={state.profile}
+                isCollaboration={!!project.isCollaboration}
+                ownerUsername={project.isCollaboration ? project.owner : null}
+              />
+            )}
             {activeTab === 'messages' && <MessagesTab messages={messages} messageInput={messageInput} setMessageInput={setMessageInput} onSendMessage={handleSendMessage} />}
             {activeTab === 'resources' && <ResourcesTab resources={resources} onUpload={handleUploadResource} onReUpload={handleReUploadResource} onDelete={handleDeleteResource} />}
             {activeTab === 'activity' && <ActivityTab activities={activity} />}
@@ -578,24 +679,54 @@ function OverviewTab({ project, techStack }) {
 }
 
 // ─── Team Tab ─────────────────────────────────────────────────────────────
-function TeamTab({ collaborators, projectOwner }) {
-  const allMembers = [
-    { 
-      id: 'owner', 
-      name: projectOwner.name || 'Project Owner', 
+function TeamTab({ collaborators, projectOwner, isCollaboration, ownerUsername }) {
+  // Look up a user's public profile from the shared localStorage slot written
+  // by AppContext's persist effect (devconnect_profile_<username>).
+  function getPublicProfile(username) {
+    try {
+      const raw = localStorage.getItem(`devconnect_profile_${username}`)
+      return raw ? JSON.parse(raw) : null
+    } catch { return null }
+  }
+
+  // Build the owner card — when we're viewing a collaboration project the real
+  // owner is a different user; look them up from the shared profile slot.
+  let ownerCard
+  if (isCollaboration && ownerUsername) {
+    const pub = getPublicProfile(ownerUsername)
+    ownerCard = {
+      id: 'owner',
+      name: pub?.name || ownerUsername,
+      avatar: pub?.avatar || `https://api.dicebear.com/9.x/avataaars/svg?seed=${ownerUsername}`,
+      role: 'Project Owner',
+      skills: [],
+      online: false,
+    }
+  } else {
+    ownerCard = {
+      id: 'owner',
+      name: projectOwner.name || 'Project Owner',
       avatar: projectOwner.avatar || `https://api.dicebear.com/9.x/avataaars/svg?seed=${projectOwner.name}`,
       role: 'Project Owner',
       skills: [],
-      online: projectOwner.online
-    },
-    ...collaborators.map(collab => ({
-      id: collab,
-      name: typeof collab === 'string' ? collab : collab.name,
-      avatar: `https://api.dicebear.com/9.x/avataaars/svg?seed=${typeof collab === 'string' ? collab : collab.name}`,
-      role: 'Collaborator',
-      skills: [],
-      online: false
-    }))
+      online: projectOwner.online,
+    }
+  }
+
+  const allMembers = [
+    ownerCard,
+    ...collaborators.map(collab => {
+      const username = typeof collab === 'string' ? collab : collab.name
+      const pub = getPublicProfile(username)
+      return {
+        id: collab,
+        name: pub?.name || username,
+        avatar: pub?.avatar || `https://api.dicebear.com/9.x/avataaars/svg?seed=${username}`,
+        role: 'Collaborator',
+        skills: [],
+        online: false,
+      }
+    }),
   ]
 
   return (
