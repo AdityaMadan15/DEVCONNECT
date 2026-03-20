@@ -121,6 +121,42 @@ async function findUserByEmail(email) {
   return data.users.find(user => user.email === email);
 }
 
+// Projects data file path
+const PROJECTS_FILE = path.join(__dirname, 'projects.json');
+
+// Helper function to read projects from JSON file
+async function readProjects() {
+  try {
+    const data = await fs.readFile(PROJECTS_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return { projects: [] };
+  }
+}
+
+// Helper function to write projects to JSON file
+async function writeProjects(data) {
+  await fs.writeFile(PROJECTS_FILE, JSON.stringify(data, null, 2));
+}
+
+// Requests data file path
+const REQUESTS_FILE = path.join(__dirname, 'requests.json');
+
+// Helper function to read requests from JSON file
+async function readRequests() {
+  try {
+    const data = await fs.readFile(REQUESTS_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return { requests: [] };
+  }
+}
+
+// Helper function to write requests to JSON file
+async function writeRequests(data) {
+  await fs.writeFile(REQUESTS_FILE, JSON.stringify(data, null, 2));
+}
+
 // Helper function to create or update user
 async function saveUser(userData) {
   const data = await readUsers();
@@ -364,6 +400,334 @@ app.get('/users', async (req, res) => {
     res.json({ users });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// ─── Users CRUD ─────────────────────────────────────────────────────────────
+
+// GET /users/:id  — get a single user by numeric ID
+app.get('/users/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid user id' });
+
+    const data = await readUsers();
+    const user = data.users.find(u => u.id === id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const { accessToken, ...safe } = user;
+    res.json({ user: safe });
+  } catch (err) {
+    console.error('GET /users/:id error:', err);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// PUT /users/:id  — update a user's profile fields
+// Allowed fields: name, bio, location, company, skills, githubUrl, googleUrl, avatar
+// Protected fields that cannot be changed: id, githubId, googleId, email, accessToken, createdAt
+app.put('/users/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid user id' });
+
+    const ALLOWED = ['name', 'bio', 'location', 'company', 'skills', 'githubUrl', 'googleUrl', 'avatar'];
+
+    const updates = {};
+    for (const key of ALLOWED) {
+      if (key in req.body) updates[key] = req.body[key];
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    const data = await readUsers();
+    const idx = data.users.findIndex(u => u.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'User not found' });
+
+    data.users[idx] = { ...data.users[idx], ...updates };
+    await writeUsers(data);
+
+    const { accessToken, ...safe } = data.users[idx];
+    res.json({ user: safe });
+  } catch (err) {
+    console.error('PUT /users/:id error:', err);
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+// DELETE /users/:id  — remove a user account
+app.delete('/users/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid user id' });
+
+    const data = await readUsers();
+    const idx = data.users.findIndex(u => u.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'User not found' });
+
+    data.users.splice(idx, 1);
+    await writeUsers(data);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /users/:id error:', err);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// ─── Projects CRUD ───────────────────────────────────────────────────────────
+
+// POST /projects  — create a new project
+// Required body fields: id, title, owner (username)
+app.post('/projects', async (req, res) => {
+  try {
+    const {
+      id, title, description, techStack, category,
+      visibility, openCollab, collaborators, status,
+      createdAt, owner
+    } = req.body;
+
+    if (!id || !title || !owner) {
+      return res.status(400).json({ error: 'id, title, and owner are required' });
+    }
+
+    const data = await readProjects();
+
+    // Prevent duplicate ids
+    if (data.projects.find(p => p.id === id)) {
+      return res.status(409).json({ error: 'A project with this id already exists' });
+    }
+
+    const newProject = {
+      id,
+      title,
+      description:   description   ?? '',
+      techStack:     techStack     ?? [],
+      category:      category      ?? '',
+      visibility:    visibility    ?? 'public',
+      openCollab:    openCollab    ?? false,
+      collaborators: collaborators ?? [],
+      status:        status        ?? 'active',
+      createdAt:     createdAt     ?? new Date().toISOString(),
+      owner,
+      stars:         0,
+      messages:      [],
+      resources:     [],
+      activity:      [],
+    };
+
+    data.projects.unshift(newProject);
+    await writeProjects(data);
+    res.status(201).json({ project: newProject });
+  } catch (err) {
+    console.error('POST /projects error:', err);
+    res.status(500).json({ error: 'Failed to create project' });
+  }
+});
+
+// GET /projects  — list projects (optional ?owner=username or ?visibility=public)
+app.get('/projects', async (req, res) => {
+  try {
+    const data = await readProjects();
+    let result = data.projects;
+
+    if (req.query.owner) {
+      result = result.filter(p => p.owner === req.query.owner);
+    }
+    if (req.query.visibility) {
+      result = result.filter(p => p.visibility === req.query.visibility);
+    }
+
+    res.json({ projects: result });
+  } catch (err) {
+    console.error('GET /projects error:', err);
+    res.status(500).json({ error: 'Failed to fetch projects' });
+  }
+});
+
+// GET /projects/:id  — get a single project by id
+app.get('/projects/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid project id' });
+
+    const data = await readProjects();
+    const project = data.projects.find(p => p.id === id);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    res.json({ project });
+  } catch (err) {
+    console.error('GET /projects/:id error:', err);
+    res.status(500).json({ error: 'Failed to fetch project' });
+  }
+});
+
+// PUT /projects/:id  — update a project
+// Allowed fields: title, description, techStack, category, visibility, openCollab,
+//                 collaborators, status, stars, messages, resources, activity
+app.put('/projects/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid project id' });
+
+    const ALLOWED = [
+      'title', 'description', 'techStack', 'category', 'visibility',
+      'openCollab', 'collaborators', 'status', 'stars',
+      'messages', 'resources', 'activity'
+    ];
+
+    const updates = {};
+    for (const key of ALLOWED) {
+      if (key in req.body) updates[key] = req.body[key];
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    const data = await readProjects();
+    const idx = data.projects.findIndex(p => p.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'Project not found' });
+
+    data.projects[idx] = { ...data.projects[idx], ...updates };
+    await writeProjects(data);
+    res.json({ project: data.projects[idx] });
+  } catch (err) {
+    console.error('PUT /projects/:id error:', err);
+    res.status(500).json({ error: 'Failed to update project' });
+  }
+});
+
+// DELETE /projects/:id  — delete a project
+app.delete('/projects/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid project id' });
+
+    const data = await readProjects();
+    const idx = data.projects.findIndex(p => p.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'Project not found' });
+
+    data.projects.splice(idx, 1);
+    await writeProjects(data);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /projects/:id error:', err);
+    res.status(500).json({ error: 'Failed to delete project' });
+  }
+});
+
+// ─── Collaboration Requests CRUD ─────────────────────────────────────────────
+
+// POST /requests  — create a new collaboration request / invite
+// Required body: id, from, to, projectId
+app.post('/requests', async (req, res) => {
+  try {
+    const { id, from, to, projectId, message, projectTitle, createdAt } = req.body;
+
+    if (!id || !from || !to || !projectId) {
+      return res.status(400).json({ error: 'id, from, to, and projectId are required' });
+    }
+
+    const data = await readRequests();
+
+    if (data.requests.find(r => r.id === id)) {
+      return res.status(409).json({ error: 'A request with this id already exists' });
+    }
+
+    const newRequest = {
+      id,
+      from,
+      to,
+      projectId,
+      projectTitle: projectTitle ?? '',
+      message:      message      ?? '',
+      status:       'pending',
+      createdAt:    createdAt    ?? new Date().toISOString(),
+    };
+
+    data.requests.unshift(newRequest);
+    await writeRequests(data);
+    res.status(201).json({ request: newRequest });
+  } catch (err) {
+    console.error('POST /requests error:', err);
+    res.status(500).json({ error: 'Failed to create request' });
+  }
+});
+
+// GET /requests  — list requests (optional ?to=username, ?from=username, ?projectId=id, ?status=pending)
+app.get('/requests', async (req, res) => {
+  try {
+    const data = await readRequests();
+    let result = data.requests;
+
+    if (req.query.to)        result = result.filter(r => r.to        === req.query.to);
+    if (req.query.from)      result = result.filter(r => r.from      === req.query.from);
+    if (req.query.projectId) result = result.filter(r => String(r.projectId) === String(req.query.projectId));
+    if (req.query.status)    result = result.filter(r => r.status    === req.query.status);
+
+    res.json({ requests: result });
+  } catch (err) {
+    console.error('GET /requests error:', err);
+    res.status(500).json({ error: 'Failed to fetch requests' });
+  }
+});
+
+// GET /requests/:id  — get a single request by id
+app.get('/requests/:id', async (req, res) => {
+  try {
+    const data = await readRequests();
+    const request = data.requests.find(r => String(r.id) === req.params.id);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    res.json({ request });
+  } catch (err) {
+    console.error('GET /requests/:id error:', err);
+    res.status(500).json({ error: 'Failed to fetch request' });
+  }
+});
+
+// PUT /requests/:id  — update a request (mainly status: 'accepted' | 'declined')
+app.put('/requests/:id', async (req, res) => {
+  try {
+    const ALLOWED = ['status', 'message', 'projectTitle'];
+
+    const updates = {};
+    for (const key of ALLOWED) {
+      if (key in req.body) updates[key] = req.body[key];
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    const data = await readRequests();
+    const idx = data.requests.findIndex(r => String(r.id) === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Request not found' });
+
+    data.requests[idx] = { ...data.requests[idx], ...updates };
+    await writeRequests(data);
+    res.json({ request: data.requests[idx] });
+  } catch (err) {
+    console.error('PUT /requests/:id error:', err);
+    res.status(500).json({ error: 'Failed to update request' });
+  }
+});
+
+// DELETE /requests/:id  — delete a request
+app.delete('/requests/:id', async (req, res) => {
+  try {
+    const data = await readRequests();
+    const idx = data.requests.findIndex(r => String(r.id) === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'Request not found' });
+
+    data.requests.splice(idx, 1);
+    await writeRequests(data);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /requests/:id error:', err);
+    res.status(500).json({ error: 'Failed to delete request' });
   }
 });
 

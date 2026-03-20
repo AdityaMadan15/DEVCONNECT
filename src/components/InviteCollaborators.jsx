@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X, UserPlus, Github, Send, ChevronDown, Check } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { requestsApi } from '../utils/api'
 
 export default function InviteCollaborators({ onClose }) {
   const { state, dispatch } = useApp()
@@ -22,19 +23,27 @@ export default function InviteCollaborators({ onClose }) {
     }
     setError('')
 
+    const p = selectedProjectObj
     const invite = {
       id:           Date.now(),
       from:         profile.username || 'unknown',   // sender
       to:           githubUsername.trim(),            // recipient
       projectId:    selectedProject || null,
-      projectTitle: selectedProjectObj?.title || null,
+      projectTitle: p?.title || null,
       message:      message.trim() || `You've been invited to collaborate!`,
       createdAt:    new Date().toISOString(),
       status:       'pending',
+      project:      p ? {
+        id: p.id, title: p.title, description: p.description,
+        techStack: p.techStack, status: p.status, visibility: p.visibility,
+        category: p.category, createdAt: p.createdAt, color: p.color,
+        openCollab: p.openCollab, collaborators: p.collaborators,
+      } : null,
     }
 
     // Add to sender's own records
     dispatch({ type: 'ADD_COLLAB_REQUEST', payload: invite })
+    requestsApi.create(invite)
     dispatch({
       type: 'ADD_NOTIFICATION',
       payload: {
@@ -45,6 +54,14 @@ export default function InviteCollaborators({ onClose }) {
         createdAt: new Date().toISOString(),
       },
     })
+
+    // Deliver to recipient via localStorage (cross-tab) + SSE (cross-device)
+    try {
+      const inboxKey = `devconnect_inbox_${invite.to}`
+      const existing = JSON.parse(localStorage.getItem(inboxKey) || '[]')
+      existing.push(invite)
+      localStorage.setItem(inboxKey, JSON.stringify(existing))
+    } catch { /* storage full */ }
 
     // Deliver to recipient in real-time via server
     try {
