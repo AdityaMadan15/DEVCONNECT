@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Plus, FolderGit2, Users, Bell, MessageSquare,
@@ -96,19 +96,35 @@ function EmptyState({ icon: Icon, title, sub, action, actionLabel }) {
 // ─── Collab Request Item ──────────────────────────────────────────────────────
 function RequestItem({ request }) {
   const { state, dispatch } = useApp()
+
+  // Support both backend ObjectId (_id) and legacy local id
+  const reqId = request._id || request.id
+
+  // Sender display: backend populates `from` as a user object; legacy uses a string
+  const senderName = request.from?.name || request.from || 'Anonymous'
+
+  // Project info: backend populates `projectId` as object; legacy uses `project`
+  const projectInfo = request.project || (request.projectId?.title ? request.projectId : null)
+
   const accept = () => {
     dispatch({ type: 'UPDATE_COLLAB_REQUEST', payload: { id: request.id, status: 'accepted' } })
-    requestsApi.update(request.id, { status: 'accepted' })
-    if (request.project) {
-      const alreadyHave = state.projects.some(p => p.id === request.project.id)
+    requestsApi.update(reqId, { status: 'accepted' })
+    // Add the project to recipient's project list as a collaboration
+    if (projectInfo) {
+      const projId = projectInfo._id || projectInfo.id
+      const alreadyHave = state.projects.some(p => String(p.id) === String(projId))
       if (!alreadyHave) {
-        dispatch({ type: 'ADD_PROJECT', payload: { ...request.project, isCollaboration: true, owner: request.from } })
+        dispatch({
+          type: 'ADD_PROJECT',
+          payload: { ...projectInfo, id: projId, isCollaboration: true, owner: senderName },
+        })
       }
     }
   }
+
   const decline = () => {
-    dispatch({ type: 'UPDATE_COLLAB_REQUEST', payload: { id: request.id, status: 'declined' } })
-    requestsApi.update(request.id, { status: 'declined' })
+    dispatch({ type: 'UPDATE_COLLAB_REQUEST', payload: { id: request.id, status: 'rejected' } })
+    requestsApi.update(reqId, { status: 'rejected' })
   }
 
   return (
@@ -116,10 +132,15 @@ function RequestItem({ request }) {
       <div className="flex items-start gap-2">
         <div className="w-7 h-7 rounded-full bg-gradient-to-br from-brand-500 to-blue-600
                         flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0">
-          {(request.from || 'U')[0].toUpperCase()}
+          {senderName[0].toUpperCase()}
         </div>
         <div className="min-w-0">
-          <p className="text-xs font-semibold text-slate-200 truncate">{request.from || 'Anonymous'}</p>
+          <p className="text-xs font-semibold text-slate-200 truncate">{senderName}</p>
+          {projectInfo && (
+            <p className="text-[11px] text-brand-400 truncate">
+              📁 {projectInfo.title || projectInfo.name}
+            </p>
+          )}
           {request.message && <p className="text-[11px] text-slate-500 line-clamp-2">{request.message}</p>}
         </div>
       </div>
@@ -140,7 +161,16 @@ export default function Dashboard() {
 
   const [inviteOpen, setInviteOpen] = useState(false)
 
-  const pendingCollabs  = collabRequests.filter(r => r.status === 'pending' && r.to === profile.username)
+  // Match pending requests where the logged-in user is the recipient.
+  // Handles both backend-populated requests (r.to is a user object with _id)
+  // and legacy localStorage requests (r.to is a username string).
+  const pendingCollabs = collabRequests.filter(r => {
+    if (r.status !== 'pending') return false
+    const toId       = r.to?._id || r.to
+    const myId       = authUser?.id
+    const myUsername = profile.username || authUser?.username || ''
+    return toId === myId || toId === myUsername || r.to === myUsername
+  })
   const unreadNotifs    = notifications.filter(n => !n.read)
   const recentProjects  = projects.slice(0, 6)
   const recentActivity  = notifications.slice(0, 5)

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { X, UserPlus, Github, Send, ChevronDown, Check } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { requestsApi } from '../utils/api'
+import { useAuth } from '../context/AuthContext'
+import { requestsApi, usersApi } from '../utils/api'
 
 export default function InviteCollaborators({ onClose }) {
   const { state, dispatch } = useApp()
+  const { user: authUser }  = useAuth()
   const { projects, profile } = state
 
   const [githubUsername, setGithubUsername]   = useState('')
@@ -21,57 +23,71 @@ export default function InviteCollaborators({ onClose }) {
       setError('Please enter a GitHub username.')
       return
     }
+    if (!selectedProject) {
+      setError('Please select a project to invite them to.')
+      return
+    }
     setError('')
 
     const p = selectedProjectObj
     const invite = {
       id:           Date.now(),
-      from:         profile.username || 'unknown',   // sender
-      to:           githubUsername.trim(),            // recipient
+      from:         profile.username || 'unknown',
+      to:           githubUsername.trim(),
       projectId:    selectedProject || null,
       projectTitle: p?.title || null,
       message:      message.trim() || `You've been invited to collaborate!`,
       createdAt:    new Date().toISOString(),
       status:       'pending',
+      // Snapshot of project so recipient can preview it before accepting
       project:      p ? {
         id: p.id, title: p.title, description: p.description,
         techStack: p.techStack, status: p.status, visibility: p.visibility,
         category: p.category, createdAt: p.createdAt, color: p.color,
-        openCollab: p.openCollab, collaborators: p.collaborators,
+        openCollab: p.openCollab,
       } : null,
     }
 
-    // Add to sender's own records
+    // Record in sender's own state + notify them it was sent
     dispatch({ type: 'ADD_COLLAB_REQUEST', payload: invite })
-    requestsApi.create(invite)
     dispatch({
       type: 'ADD_NOTIFICATION',
       payload: {
         id:        Date.now() + 1,
         type:      'collab_invite',
-        message:   `Collaboration invitation sent to @${githubUsername.trim()}${selectedProjectObj ? ` for "${selectedProjectObj.title}"` : ''}.`,
+        message:   `Collaboration invitation sent to @${githubUsername.trim()}${p ? ` for "${p.title}"` : ''}.`,
         read:      false,
         createdAt: new Date().toISOString(),
       },
     })
 
-    // Deliver to recipient via localStorage (cross-tab) + SSE (cross-device)
+    // POST to backend — first look up recipient by username to get their MongoDB _id
+    // The backend Request model requires `to` to be a valid ObjectId.
     try {
-      const inboxKey = `devconnect_inbox_${invite.to}`
-      const existing = JSON.parse(localStorage.getItem(inboxKey) || '[]')
-      existing.push(invite)
-      localStorage.setItem(inboxKey, JSON.stringify(existing))
-    } catch { /* storage full */ }
+      const usersData = await usersApi.getAll()
+      const allUsers  = usersData?.data || []
+      const searchString = githubUsername.trim().toLowerCase()
+      const recipient = allUsers.find(
+        u => (u.username || '').toLowerCase() === searchString
+          || (u.name || '').toLowerCase() === searchString
+          || (u.email || '').toLowerCase().startsWith(searchString)
+      )
 
-    // Deliver to recipient in real-time via server
-    try {
-      await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/invites/send`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(invite),
+      if (!recipient) {
+        setError(`User "${githubUsername.trim()}" not found. Make sure they are registered on DevConnect.`)
+        return
+      }
+
+      await requestsApi.create({
+        from:      authUser.id,             // MongoDB ObjectId required by backend
+        to:        recipient._id,           // MongoDB ObjectId required by backend
+        projectId: selectedProject,         // MongoDB ObjectId required by backend
+        status:    'pending',
       })
     } catch (err) {
-      console.error('Real-time delivery failed:', err)
+      console.error('Failed to post collab request:', err)
+      setError('Failed to send invitation. Please try again.')
+      return
     }
 
     setSent(true)

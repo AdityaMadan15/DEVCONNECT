@@ -17,7 +17,8 @@ import {
   UserPlus,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
-import { projectsApi, requestsApi } from '../utils/api'
+import { useAuth } from '../context/AuthContext'
+import { projectsApi, requestsApi, usersApi } from '../utils/api'
 
 // ── Tech-stack suggestions ────────────────────────────────────────────────────
 const TECH_OPTIONS = [
@@ -456,6 +457,7 @@ function StepReview({ data }) {
 export default function CreateProject() {
   const navigate          = useNavigate()
   const { state, dispatch } = useApp()
+  const { user: authUser }  = useAuth()
   const onBack            = () => navigate(-1)
   const TOTAL_STEPS  = 4
   const [step, setStep] = useState(0)
@@ -475,79 +477,94 @@ export default function CreateProject() {
   const onChange = (field, value) =>
     setForm(prev => ({ ...prev, [field]: value }))
 
-  const goNext = () => {
+  const goNext = async () => {
     if (step < TOTAL_STEPS - 1) {
       setDir(1)
       setStep(s => s + 1)
     } else {
-      // Persist to AppContext → localStorage, and to backend
+      // Persist to backend
       const senderUsername = state.profile?.username || 'unknown'
       const newProject = {
-        id:            Date.now(),
         title:         form.name.trim(),
         description:   form.description.trim(),
         techStack:     form.stack,
         category:      form.category,
         visibility:    form.visibility,
         openCollab:    form.openCollab,
-        collaborators: form.collaborators,
+        collaborators: form.collaborators, // strings (legacy frontend display support)
         status:        'active',
-        createdAt:     new Date().toISOString(),
-        owner:         senderUsername,
       }
-      dispatch({ type: 'ADD_PROJECT', payload: newProject })
-      projectsApi.create(newProject)
-      dispatch({
-        type: 'ADD_NOTIFICATION',
-        payload: {
-          id:        Date.now() + 1,
-          type:      'project_created',
-          message:   `Project "${newProject.title}" was created successfully.`,
-          read:      false,
-          createdAt: new Date().toISOString(),
-        },
-      })
 
-      // Send collab invites to every teammate added in the wizard
-      form.collaborators.forEach((collab, i) => {
-        const invite = {
-          id:           Date.now() + 10 + i,
-          from:         senderUsername,
-          to:           collab,
-          projectId:    newProject.id,
-          projectTitle: newProject.title,
-          message:      `You've been invited to collaborate on "${newProject.title}"!`,
-          createdAt:    new Date().toISOString(),
-          status:       'pending',
-          project: {
-            id:           newProject.id,
-            title:        newProject.title,
-            description:  newProject.description,
-            techStack:    newProject.techStack,
-            status:       newProject.status,
-            visibility:   newProject.visibility,
-            category:     newProject.category,
-            createdAt:    newProject.createdAt,
-            openCollab:   newProject.openCollab,
-            collaborators: newProject.collaborators,
+      try {
+        const res = await projectsApi.create(newProject)
+        const savedProject = res?.data
+        if (!savedProject) throw new Error('Failed to create project')
+
+        // Dispatch to UI
+        dispatch({ type: 'ADD_PROJECT', payload: { ...savedProject, id: savedProject._id, owner: senderUsername } })
+        dispatch({
+          type: 'ADD_NOTIFICATION',
+          payload: {
+            id:        Date.now() + 1,
+            type:      'project_created',
+            message:   `Project "${savedProject.title}" was created successfully.`,
+            read:      false,
+            createdAt: new Date().toISOString(),
           },
-        }
-        dispatch({ type: 'ADD_COLLAB_REQUEST', payload: invite })
-        requestsApi.create(invite)
-        try {
-          const inboxKey = `devconnect_inbox_${collab}`
-          const existing = JSON.parse(localStorage.getItem(inboxKey) || '[]')
-          existing.push(invite)
-          localStorage.setItem(inboxKey, JSON.stringify(existing))
-        } catch { /* ignore storage errors */ }
-        fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/invites/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(invite),
-        }).catch(() => {})
-      })
+        })
 
-      setDone(true)
+        // Fetch users to resolve usernames to MongoDB ObjectIds for the invites
+        const usersRes = await usersApi.getAll()
+        const allUsers = usersRes?.data || []
+
+        // Send collab invites to every teammate added in the wizard
+        for (let i = 0; i < form.collaborators.length; i++) {
+          const collab = form.collaborators[i]
+          
+          const searchString = collab.toLowerCase()
+          // Find the recipient's exact MongoDB _id
+          const recipient = allUsers.find(
+            u => (u.username || '').toLowerCase() === searchString
+              || (u.name || '').toLowerCase() === searchString
+              || (u.email || '').toLowerCase().startsWith(searchString)
+          )
+
+          if (recipient) {
+            const invitePayload = {
+              from:      authUser.id,
+              to:        recipient._id,
+              projectId: savedProject._id,
+              status:    'pending',
+            }
+
+            try {
+              await requestsApi.create(invitePayload)
+
+              // Add to local state for sender's UI
+              const localInvite = {
+                id:           Date.now() + i,
+                from:         senderUsername,
+                to:           collab,
+                projectId:    savedProject._id,
+                projectTitle: savedProject.title,
+                status:       'pending',
+                createdAt:    new Date().toISOString()
+              }
+              dispatch({ type: 'ADD_COLLAB_REQUEST', payload: localInvite })
+
+            } catch (err) {
+              console.error(`Failed to send invite to ${collab}`, err)
+            }
+          } else {
+            console.warn(`User ${collab} not found for invite.`)
+          }
+        }
+
+        setDone(true)
+      } catch (error) {
+        console.error('Error creating project:', error)
+        alert('Failed to create project. Please try again.')
+      }
     }
   }
 

@@ -6,7 +6,8 @@ import {
   Users, Shield, Globe, Lock,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
-import { projectsApi } from '../../utils/api'
+import { useAuth } from '../../context/AuthContext'
+import { projectsApi, requestsApi, usersApi } from '../../utils/api'
 
 // ── Category colours ──────────────────────────────────────────────────────────
 const CAT = {
@@ -34,6 +35,7 @@ const VISIBILITY_ICON = { public: Globe, invite: Shield, private: Lock }
 
 export default function ProjectCard({ project, className = '' }) {
   const { state, dispatch } = useApp()
+  const { user: authUser }  = useAuth()
   const navigate = useNavigate()
   const [addingTeammate, setAddingTeammate] = useState(false)
   const [ghInput, setGhInput]               = useState('')
@@ -45,84 +47,100 @@ export default function ProjectCard({ project, className = '' }) {
   const status      = STATUS[project.status] || STATUS.draft
   const hasProgress = typeof project.progress === 'number'
   const hasMeta     = project.stars !== undefined
-  const realCollabs = Array.isArray(project.collaborators) ? project.collaborators : []
+  
+  // Extract members safely from either backend's 'members' or frontend's 'collaborators'
+  const rawCollabs = (Array.isArray(project.members) && project.members.length > 0)
+    ? project.members
+    : (Array.isArray(project.collaborators) ? project.collaborators : [])
+    
+  const realCollabs = [...new Set(rawCollabs.filter(Boolean).map(m => 
+    typeof m === 'object' ? (m.name || m.username || 'unknown') : String(m)
+  ))]
+
   const cat         = CAT[project.category] || DEFAULT_CAT
   const VisIcon     = VISIBILITY_ICON[project.visibility] || Globe
   const dateStr     = project.lastUpdated
     || (project.createdAt
         ? new Date(project.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })
         : 'Recently')
+  // Extract owner name safely (backend returns populated object, frontend local state might use string)
+  const ownerName   = typeof project.owner === 'object' && project.owner !== null
+    ? (project.owner.name || project.owner.username || 'Unknown')
+    : (project.owner || 'Unknown')
+
   // First letter for the big avatar
   const initial = title.charAt(0).toUpperCase()
 
   const addTeammate = async () => {
     const u = ghInput.trim().replace(/^@/, '')
     if (!u || realCollabs.includes(u)) return
-    dispatch({ type: 'UPDATE_PROJECT', payload: { id: project.id, collaborators: [...realCollabs, u] } })
-    setGhInput('')
+
     setAddingTeammate(false)
+    setGhInput('')
 
-    const invite = {
-      id:           Date.now(),
-      from:         state.profile?.username || 'unknown',
-      to:           u,
-      projectId:    project.id || null,
-      projectTitle: title,
-      message:      `You've been invited to collaborate on "${title}"!`,
-      createdAt:    new Date().toISOString(),
-      status:       'pending',
-      // Only store essential fields — strip messages/resources/activity to save space
-      project: {
-        id: project.id, title: project.title, description: project.description,
-        techStack: project.techStack, status: project.status, visibility: project.visibility,
-        category: project.category, createdAt: project.createdAt, color: project.color,
-        openCollab: project.openCollab, isCollaboration: project.isCollaboration, owner: project.owner,
-        collaborators: [...realCollabs, u],
-      },
-    }
-
-    dispatch({ type: 'ADD_COLLAB_REQUEST', payload: invite })
-    dispatch({
-      type: 'ADD_NOTIFICATION',
-      payload: {
-        id:        Date.now() + 1,
-        type:      'collab_invite',
-        message:   `Collaboration invitation sent to @${u} for "${title}".`,
-        read:      false,
-        createdAt: new Date().toISOString(),
-      },
-    })
-
+    // Look up the recipient to get their MongoDB ObjectId
     try {
-      const inboxKey = `devconnect_inbox_${u}`
-      const existing = JSON.parse(localStorage.getItem(inboxKey) || '[]')
-      existing.push(invite)
-      localStorage.setItem(inboxKey, JSON.stringify(existing))
-    } catch { /* storage full */ }
+      const usersData = await usersApi.getAll()
+      const allUsers  = usersData?.data || []
+      const searchString = u.toLowerCase()
+      const recipient = allUsers.find(
+        user => (user.username || '').toLowerCase() === searchString
+          || (user.name || '').toLowerCase() === searchString
+          || (user.email || '').toLowerCase().startsWith(searchString)
+      )
 
-    try {
-      await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/invites/send`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(invite),
+      if (!recipient) {
+        alert(`User "${u}" not found. Make sure they are registered on DevConnect.`)
+        return
+      }
+
+      const invite = {
+        from:      authUser.id,
+        to:        recipient._id,
+        projectId: project.id,
+        status:    'pending',
+      }
+
+      await requestsApi.create(invite)
+
+      // They will appear in the team list ONLY after they accept the request.
+
+      dispatch({
+        type: 'ADD_NOTIFICATION',
+        payload: {
+          id:        Date.now() + 1,
+          type:      'collab_invite',
+          message:   `Collaboration invitation sent to @${u} for "${title}".`,
+          read:      false,
+          createdAt: new Date().toISOString(),
+        },
       })
     } catch (err) {
-      console.error('Real-time delivery failed:', err)
+      console.error('Failed to post collab request:', err)
+      alert('Failed to send invitation.')
     }
   }
   const removeTeammate = (u) => {
-    const filtered = realCollabs.filter(c => c !== u)
+    const filtered = rawCollabs.filter(c => {
+      const key = typeof c === 'object' ? (c.name || c.username || 'unknown') : String(c)
+      return key !== u
+    })
     dispatch({ type: 'UPDATE_PROJECT', payload: { id: project.id, collaborators: filtered } })
-    projectsApi.update(project.id, { collaborators: filtered })
+    
+    // We must send 'members' to backend with ObjectIds
+    const memberIds = filtered
+      .map(c => typeof c === 'object' ? c._id : null)
+      .filter(id => id && id.length === 24)
+
+    projectsApi.update(project.id, { members: memberIds })
   }
   const handleDelete = () => {
     if (project.isCollaboration) {
       // Leave: remove this user from the project's collaborators on backend,
       // but don't delete the project itself (it belongs to the owner)
       const myUsername = (state.profile?.username || '').replace(/^@/, '')
-      const updatedCollabs = realCollabs.filter(c => c !== myUsername)
       dispatch({ type: 'DELETE_PROJECT', payload: project.id })
-      projectsApi.update(project.id, { collaborators: updatedCollabs })
+      projectsApi.leave(project.id)
     } else {
       dispatch({ type: 'DELETE_PROJECT', payload: project.id })
       projectsApi.remove(project.id)
@@ -176,7 +194,7 @@ export default function ProjectCard({ project, className = '' }) {
               {project.isCollaboration && project.owner && (
                 <div className="flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md bg-black/25 w-fit">
                   <Users size={9} className="text-brand-300" />
-                  <span className="text-[10px] text-brand-300 font-medium">@{project.owner}'s project</span>
+                  <span className="text-[10px] text-brand-300 font-medium">@{ownerName}'s project</span>
                 </div>
               )}
             </div>
@@ -247,7 +265,7 @@ export default function ProjectCard({ project, className = '' }) {
           {hasMeta && (
             <>
               <span className="flex items-center gap-1"><Star size={10} className="text-amber-500" />{project.stars}</span>
-              <span className="flex items-center gap-1"><Users size={10} />{project.collaborators}</span>
+              <span className="flex items-center gap-1"><Users size={10} />{realCollabs.length}</span>
             </>
           )}
           <span className="flex items-center gap-1.5 ml-auto text-slate-600">
@@ -289,7 +307,7 @@ export default function ProjectCard({ project, className = '' }) {
               <span className="flex items-center gap-1.5 pl-1.5 pr-2 py-0.5 rounded-full
                                bg-brand-500/10 border border-brand-500/20 text-brand-300 text-[11px]">
                 <Github size={9} className="text-brand-400" />
-                <span>@{project.owner}</span>
+                <span>@{ownerName}</span>
               </span>
             </div>
           ) : (

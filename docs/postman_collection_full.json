@@ -1,0 +1,124 @@
+{
+  "info": {
+    "name": "DevConnect - Full API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Complete collection for DevConnect mock API with example requests and responses."
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": { "method": "GET", "url": "http://localhost:3001/health" },
+      "response": [ { "name": "200 OK", "body": "{ \"status\": \"ok\", \"timestamp\": \"2026-04-21T00:00:00.000Z\" }", "status": "OK", "code": 200 } ]
+    },
+
+    {
+      "name": "Auth - GitHub (get authorize URL)",
+      "request": { "method": "GET", "url": "http://localhost:3001/auth/github" },
+      "response": [ { "name": "200", "body": "{ \"url\": \"https://github.com/login/oauth/authorize?...\" }", "status": "OK", "code": 200 } ]
+    },
+    {
+      "name": "Auth - Google (get authorize URL)",
+      "request": { "method": "GET", "url": "http://localhost:3001/auth/google" },
+      "response": [ { "name": "200", "body": "{ \"url\": \"https://accounts.google.com/o/oauth2/v2/auth?...\" }", "status": "OK", "code": 200 } ]
+    },
+    {
+      "name": "POST /auth/verify",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"token\": \"<TOKEN>\" }" },
+        "url": "http://localhost:3001/auth/verify"
+      },
+      "response": [ { "name": "200", "body": "{ \"user\": { \"id\":1, \"username\":\"alice\" } }", "status": "OK", "code": 200 } ]
+    },
+
+    {
+      "name": "Users - List",
+      "request": { "method": "GET", "url": "http://localhost:3001/users" },
+      "response": [ { "name": "200", "body": "{ \"users\": [] }", "status": "OK", "code": 200 } ]
+    },
+    {
+      "name": "Users - Get by ID",
+      "request": { "method": "GET", "url": "http://localhost:3001/users/1" },
+      "response": [ { "name": "200", "body": "{ \"user\": { \"id\":1, \"username\":\"alice\" } }", "status": "OK", "code": 200 } ]
+    },
+    {
+      "name": "Users - Update",
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"name\": \"Alice A\", \"bio\": \"Dev\" }" },
+        "url": "http://localhost:3001/users/1"
+      }
+    },
+    {
+      "name": "Users - Delete",
+      "request": { "method": "DELETE", "url": "http://localhost:3001/users/1" }
+    },
+
+    {
+      "name": "Projects - List",
+      "request": { "method": "GET", "url": "http://localhost:3001/projects" },
+      "response": [ { "name": "200", "body": "{ \"projects\": [] }", "status": "OK", "code": 200 } ]
+    },
+    {
+      "name": "Projects - Create",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"id\":101, \"title\":\"Example\", \"owner\":\"alice\" }" },
+        "url": "http://localhost:3001/projects"
+      },
+      "response": [ { "name": "201", "body": "{ \"project\": { \"id\":101, \"title\":\"Example\" } }", "status": "Created", "code": 201 } ]
+    },
+    {
+      "name": "Projects - Get",
+      "request": { "method": "GET", "url": "http://localhost:3001/projects/101" }
+    },
+    {
+      "name": "Projects - Update",
+      "request": { "method": "PUT", "header":[{"key":"Content-Type","value":"application/json"}], "body":{"mode":"raw","raw":"{ \"title\":\"Updated\" }"}, "url":"http://localhost:3001/projects/101" }
+    },
+    {
+      "name": "Projects - Delete",
+      "request": { "method": "DELETE", "url": "http://localhost:3001/projects/101" }
+    },
+
+    {
+      "name": "Requests - List",
+      "request": { "method": "GET", "url": "http://localhost:3001/requests" }
+    },
+    {
+      "name": "Requests - Create",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"id\":1, \"from\":\"alice\", \"to\":\"bob\", \"projectId\":101 }" },
+        "url": "http://localhost:3001/requests"
+      },
+      "response": [ { "name": "201", "body": "{ \"request\": { \"id\":1, \"status\":\"pending\" } }", "status": "Created", "code": 201 } ]
+    },
+    {
+      "name": "Requests - Get",
+      "request": { "method": "GET", "url": "http://localhost:3001/requests/1" }
+    },
+    {
+      "name": "Requests - Update",
+      "request": { "method": "PUT", "header":[{"key":"Content-Type","value":"application/json"}], "body":{"mode":"raw","raw":"{ \"status\":\"accepted\" }"}, "url":"http://localhost:3001/requests/1" }
+    },
+    {
+      "name": "Requests - Delete",
+      "request": { "method": "DELETE", "url": "http://localhost:3001/requests/1" }
+    },
+
+    {
+      "name": "Invites - Send",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{ \"id\":123, \"from\":\"alice\", \"to\":\"bob\", \"projectId\":101, \"message\":\"Join me\" }" },
+        "url": "http://localhost:3001/invites/send"
+      }
+    }
+  ]
+}

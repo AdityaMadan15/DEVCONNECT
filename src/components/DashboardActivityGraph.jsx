@@ -84,21 +84,15 @@ export default function DashboardActivityGraph() {
       }
     })
 
-    // Count collaboration requests accepted per day
-    state.collabRequests.forEach(req => {
-      if (req.status === 'accepted') {
-        let collabDate
-        if (req.createdAt) {
-          collabDate = new Date(req.createdAt).toISOString().split('T')[0]
-        } else if (req.acceptedAt) {
-          collabDate = new Date(req.acceptedAt).toISOString().split('T')[0]
-        } else {
-          // If no date, assume today
-          collabDate = now.toISOString().split('T')[0]
-        }
-        const dayData = dates.find(d => d.date === collabDate)
-        if (dayData) {
-          dayData.collaborations += 1
+    // Count collaborations per day (based on actual current projects)
+    state.projects.forEach(project => {
+      let collabDate = (project.createdAt ? new Date(project.createdAt) : now).toISOString().split('T')[0];
+      const dayData = dates.find(d => d.date === collabDate);
+      if (dayData) {
+        if (project.isCollaboration) {
+          dayData.collaborations += 1;
+        } else if (project.collaborators?.length > 0) {
+          dayData.collaborations += project.collaborators.length;
         }
       }
     })
@@ -143,7 +137,7 @@ export default function DashboardActivityGraph() {
       projects: state.projects.length,
       messages: totalMessages,
       resources: totalResources,
-      collaborations: state.collabRequests.filter(r => r.status === 'accepted').length
+      collaborations: state.projects.reduce((acc, p) => acc + (p.isCollaboration ? 1 : (p.collaborators?.length || 0)), 0)
     }
   }, [state.projects, state.collabRequests])
 

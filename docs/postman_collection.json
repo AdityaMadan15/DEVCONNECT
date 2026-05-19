@@ -1,0 +1,25 @@
+{
+  "info": {
+    "name": "DevConnect API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List Projects",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "http://localhost:3001/projects", "host": ["http://localhost:3001"], "path": ["projects"] }
+      }
+    },
+    {
+      "name": "Create Project",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "body": {"mode":"raw","raw":"{\n  \"id\":101,\n  \"title\":\"Example\",\n  \"owner\":\"alice\"\n}"},
+        "url": { "raw": "http://localhost:3001/projects", "host": ["http://localhost:3001"], "path": ["projects"] }
+      }
+    }
+  ]
+}

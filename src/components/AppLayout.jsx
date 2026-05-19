@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Outlet, useLocation, Navigate } from 'react-router-dom'
 import Sidebar       from './Sidebar'
 import Navbar        from './Navbar'
 import NetworkCanvas from './NetworkCanvas'
+import { useAuth } from '../context/AuthContext'
 
 // Map routes → readable page titles
 const PAGE_TITLES = {
@@ -19,6 +20,12 @@ const PAGE_TITLES = {
 export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { pathname } = useLocation()
+  const { isAuthenticated, loading } = useAuth()
+
+  const hasLocalSession = !!localStorage.getItem('dc_user')
+  if (!loading && !isAuthenticated && !hasLocalSession) {
+    return <Navigate to="/login" replace />
+  }
 
   // Handle dynamic routes
   let pageTitle = PAGE_TITLES[pathname]

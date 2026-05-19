@@ -2,69 +2,84 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext();
 
-const API_URL = 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const AUTH_BASE = `${API_URL}/api/auth`;
+
+function decodeToken(token) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return JSON.parse(atob(token));
+    }
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+function openOAuthPopup(url, title) {
+  const width = 600;
+  const height = 700;
+  const left = window.screen.width / 2 - width / 2;
+  const top = window.screen.height / 2 - height / 2;
+
+  return window.open(
+    url,
+    title,
+    `width=${width},height=${height},left=${left},top=${top}`
+  );
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Check if user is already logged in
+  // Check if user is already logged in by calling /api/auth/me
   useEffect(() => {
     const checkAuth = async () => {
       const token = localStorage.getItem('authToken');
-      
+
       if (!token) {
         setLoading(false);
         return;
       }
 
       try {
-        const response = await fetch(`${API_URL}/auth/verify`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ token }),
+        const res = await fetch(`${AUTH_BASE}/me`, {
+          headers: { Authorization: `Bearer ${token}` },
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          setUser(data.user);
-        } else if (response.status === 401 || response.status === 403) {
-          // Server explicitly says token is invalid — remove it
+        if (res.ok) {
+          const data = await res.json();
+          // Backend returns { success: true, data: { _id, name, email, avatar, skills, ... } }
+          const u = data.data;
+          setUser({
+            id: u._id,
+            name: u.name,
+            email: u.email,
+            avatar: u.avatar || null,
+            skills: u.skills || [],
+          });
+        } else {
+          // Token invalid or expired
           localStorage.removeItem('authToken');
+          setUser(null);
         }
-        // Any other status (5xx, etc.) — keep token and retry next time
-      } catch (error) {
-        // Network error (server down) — decode token locally so we can still load
-        // the right per-user localStorage key and show their data offline
-        console.error('Auth check failed (server may be offline):', error);
+      } catch {
+        // Backend offline — fall back to local JWT decode for offline mode
         try {
-          // Try JWT format first (header.payload.signature)
-          let sessionData = null
-          const parts = token.split('.')
-          if (parts.length === 3) {
-            try {
-              const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-              const padded = b64 + '='.repeat((4 - b64.length % 4) % 4)
-              sessionData = JSON.parse(atob(padded))
-            } catch { /* not a JWT */ }
-          }
-          // Fallback: try whole token as plain base64 JSON
-          if (!sessionData) {
-            sessionData = JSON.parse(atob(token))
-          }
-          if (sessionData && (sessionData.githubId || sessionData.googleId)) {
-            setUser({
-              githubId: sessionData.githubId || null,
-              googleId: sessionData.googleId || null,
-              username: sessionData.username || null,
-              offline: true,
-            });
+          const payload = decodeToken(token);
+          if (payload && payload.exp && payload.exp * 1000 > Date.now()) {
+            setUser({ id: payload.id, name: null, email: null, avatar: null, offline: true });
+          } else {
+            localStorage.removeItem('authToken');
+            setUser(null);
           }
         } catch {
-          // Token not decodable — leave user as null
+          setUser(null);
         }
       } finally {
         setLoading(false);
@@ -78,23 +93,16 @@ export function AuthProvider({ children }) {
   const loginWithGithub = async () => {
     try {
       setError(null);
-      const response = await fetch(`${API_URL}/auth/github`);
-      const data = await response.json();
-      
-      // Open GitHub OAuth in a popup
-      const width = 600;
-      const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-      
-      window.open(
-        data.url,
-        'GitHub Login',
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
+      const popup = openOAuthPopup(`${AUTH_BASE}/github`, 'GitHub Login');
+      if (!popup) {
+        setError('Popup was blocked. Please allow popups and try again.');
+        return false;
+      }
+      return true;
     } catch (error) {
       console.error('GitHub login failed:', error);
       setError('Failed to initiate GitHub login');
+      return false;
     }
   };
 
@@ -102,68 +110,65 @@ export function AuthProvider({ children }) {
   const loginWithGoogle = async () => {
     try {
       setError(null);
-      const response = await fetch(`${API_URL}/auth/google`);
-      const data = await response.json();
-      
-      // Open Google OAuth in a popup
-      const width = 600;
-      const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-      
-      window.open(
-        data.url,
-        'Google Login',
-        `width=${width},height=${height},left=${left},top=${top}`
-      );
+      const popup = openOAuthPopup(`${AUTH_BASE}/google`, 'Google Login');
+      if (!popup) {
+        setError('Popup was blocked. Please allow popups and try again.');
+        return false;
+      }
+      return true;
     } catch (error) {
       console.error('Google login failed:', error);
       setError('Failed to initiate Google login');
+      return false;
     }
   };
 
-  // Handle auth success (called from callback page)
+  // Handle auth success (called from OAuth callback page)
+  // Saves token then hydrates full user from GET /api/auth/me
   const handleAuthSuccess = async (token) => {
     try {
+      if (!token) {
+        setError('Authentication token is missing');
+        return false;
+      }
+
       localStorage.setItem('authToken', token);
-      
-      const response = await fetch(`${API_URL}/auth/verify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ token }),
+
+      const res = await fetch(`${AUTH_BASE}/me`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setUser(data.user);
+      if (res.ok) {
+        const data = await res.json();
+        const u = data.data;
+        setUser({
+          id: u._id,
+          name: u.name,
+          email: u.email,
+          avatar: u.avatar || null,
+          skills: u.skills || [],
+        });
         return true;
       } else {
-        throw new Error('Failed to verify token');
+        // Fallback: decode token locally (works for offline/dev)
+        const payload = decodeToken(token);
+        if (payload) {
+          setUser({ id: payload.id, name: null, email: null, avatar: null, offline: true });
+          return true;
+        }
+        throw new Error('Could not hydrate user');
       }
-    } catch (error) {
-      console.error('Auth success handler failed:', error);
+    } catch (err) {
+      console.error('Auth success handler failed:', err);
       setError('Authentication failed');
       return false;
     }
   };
 
-  // Logout
-  const logout = async () => {
-    try {
-      await fetch(`${API_URL}/auth/logout`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-    } catch (error) {
-      console.error('Logout request failed:', error);
-    } finally {
-      localStorage.removeItem('authToken');
-      setUser(null);
-    }
+  // Logout — JWT is stateless, just clear localStorage
+  const logout = () => {
+    localStorage.removeItem('authToken');
+    setUser(null);
   };
 
   const value = {

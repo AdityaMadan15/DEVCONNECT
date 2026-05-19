@@ -84,8 +84,11 @@ function writeSharedProject(project) {
       activity:      mergeArraysById(existingData?.activity,   project.activity,   true),  // desc (newest→oldest)
       // Stars: take the higher value — un-starring doesn't reduce below existing count
       stars:         Math.max(existingData?.stars || 0, project.stars || 0),
-      collaborators: [...new Set([...(existingData?.collaborators || []), ...(project.collaborators || [])])],
     }
+
+    // We do NOT merge collaborators with existingData. If a user was deleted,
+    // merging would resurrect them from the cache. The current project state is the source of truth.
+    merged.collaborators = project.collaborators || []
 
     const newVal = JSON.stringify(merged)
     if (existingRaw !== newVal) {
@@ -169,7 +172,7 @@ const INITIAL_STATE = {
   },
   users: [],             // other users' public profiles
   projects: [],          // { id, title, description, techStack, status, visibility, createdAt }
-  collabRequests: [],    // { id, from, projectId, message, createdAt, status: 'pending'|'accepted'|'declined' }
+  collabRequests: [],    // { id, from, projectId, message, createdAt, status: 'pending'|'accepted'|'rejected' }
   notifications: [],     // { id, type, message, read, createdAt }
   messages: [],          // stub – not used yet
   theme: 'dark',         // 'dark' | 'light'
@@ -293,8 +296,10 @@ function reducer(state, action) {
       const newMessages      = mergeArraysById(target.messages      || [], messages      || [], false)
       const newResources     = mergeArraysById(target.resources     || [], resources     || [], false) // local first → preserves fileData
       const newActivity      = mergeArraysById(target.activity      || [], activity      || [], true)
+      // The backend is the absolute source of truth for members.
+      // We do not merge with local state to prevent ghost clones.
+      const newCollaborators = collaborators || []
       const newStars         = Math.max(stars ?? 0, target.stars ?? 0)
-      const newCollaborators = [...new Set([...(target.collaborators || []), ...(collaborators || [])])]
 
       const changed =
         newMessages.length      !== (target.messages      || []).length ||
@@ -621,111 +626,72 @@ export function AppProvider({ children }) {
   // A ref flag ensures this runs at most once per page load.
   const backendSyncedRef = useRef(false)
   useEffect(() => {
-    const username = authUser?.username || state.profile.username?.replace(/^@/, '')
-    if (!state.ready || !username) return
+    if (!state.ready || !authUser?.id) return
     if (backendSyncedRef.current) return
     backendSyncedRef.current = true
 
     const API = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+    const token = localStorage.getItem('authToken')
+    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {}
     const safe = (p) => p.then(r => r.ok ? r.json() : null).catch(() => null)
 
     Promise.all([
-      safe(fetch(`${API}/projects?owner=${encodeURIComponent(username)}`)),
-      safe(fetch(`${API}/requests?to=${encodeURIComponent(username)}`)),
+      safe(fetch(`${API}/api/projects?user=${encodeURIComponent(authUser.id)}`, { headers: authHeaders })),
+      safe(fetch(`${API}/api/requests?to=${encodeURIComponent(authUser.id)}`, { headers: authHeaders })),
     ]).then(([projectsData, requestsData]) => {
-      if (projectsData?.projects) {
-        projectsData.projects.forEach(sp => {
-          const already = projectsRef.current.find(p => String(p.id) === String(sp.id))
+      // Backend returns { success: true, data: [...] }
+      if (projectsData?.data) {
+        const backendIds = new Set(projectsData.data.map(sp => String(sp._id || sp.id)))
+        projectsRef.current.forEach(p => {
+          if (!backendIds.has(String(p.id))) {
+            dispatch({ type: 'DELETE_PROJECT', payload: p.id })
+          }
+        })
+
+        projectsData.data.forEach(sp => {
+          const spId = sp._id || sp.id
+          const ownerId = sp.owner && typeof sp.owner === 'object' ? (sp.owner._id || sp.owner.id) : sp.owner
+          const isCollab = String(ownerId) !== String(authUser.id)
+
+          const already = projectsRef.current.find(p => String(p.id) === String(spId))
           if (!already) {
-            dispatch({ type: 'ADD_PROJECT', payload: sp })
+            dispatch({ type: 'ADD_PROJECT', payload: { ...sp, id: spId, collaborators: sp.members || [], isCollaboration: isCollab } })
           } else {
+            if (already.isCollaboration !== isCollab || !already.owner) {
+               dispatch({ type: 'UPDATE_PROJECT', payload: { id: spId, isCollaboration: isCollab, owner: sp.owner } })
+            }
             dispatch({
               type: 'SYNC_PROJECT',
               payload: {
-                projectId:     sp.id,
-                messages:      sp.messages      || [],
-                resources:     sp.resources     || [],
-                activity:      sp.activity      || [],
-                stars:         sp.stars         || 0,
-                collaborators: sp.collaborators || [],
+                projectId:     spId,
+                messages:      sp.messages  || [],
+                resources:     sp.resources || [],
+                activity:      sp.activity  || [],
+                stars:         sp.stars     || 0,
+                collaborators: sp.members   || [],
               },
             })
           }
         })
       }
-      if (requestsData?.requests) {
-        requestsData.requests.forEach(req => {
-          dispatch({ type: 'ADD_COLLAB_REQUEST', payload: req })
+      if (requestsData?.data) {
+        requestsData.data.forEach(req => {
+          dispatch({ type: 'ADD_COLLAB_REQUEST', payload: { ...req, id: req._id || req.id } })
         })
       }
     })
-  }, [state.ready, state.profile.username, authUser?.username]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.ready, authUser?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Real-time invite delivery via SSE ─────────────────────────────────────
-  useEffect(() => {
-    const username = state.profile.username || authUser?.username
-    if (!username) return
+  // ── Real-time invite delivery via SSE was removed ────────────────────────
+  // The /invites/stream/:username endpoint no longer exists in the backend.
+  // Real-time messaging is handled via Socket.IO on the MessagesPage.
+  // Cross-tab invite delivery is handled by the localStorage inbox below.
 
-    const es = new EventSource(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/invites/stream/${username}`)
-
-    es.onmessage = (e) => {
-      try {
-        const invite = JSON.parse(e.data)
-        dispatch({ type: 'ADD_COLLAB_REQUEST', payload: { ...invite, status: 'pending' } })
-        dispatch({
-          type: 'ADD_NOTIFICATION',
-          payload: {
-            id: Date.now(),
-            type: 'collab_invite',
-            message: `@${invite.from} invited you to collaborate${invite.projectTitle ? ` on "${invite.projectTitle}"` : ''}`,
-            read: false,
-            createdAt: new Date().toISOString(),
-          },
-        })
-      } catch { /* malformed event */ }
-    }
-
-    return () => es.close()
-  }, [state.profile.username, authUser?.username])
-
-  // ── Cross-tab invite delivery via localStorage ────────────────────────────
-  useEffect(() => {
-    const username = state.profile.username || authUser?.username
-    if (!username) return
-
-    const inboxKey = `devconnect_inbox_${username}`
-
-    const processInbox = () => {
-      try {
-        const raw = localStorage.getItem(inboxKey)
-        if (!raw) return
-        const invites = JSON.parse(raw)
-        if (!Array.isArray(invites) || invites.length === 0) return
-        invites.forEach(invite => {
-          dispatch({ type: 'ADD_COLLAB_REQUEST', payload: { ...invite, status: 'pending' } })
-          dispatch({
-            type: 'ADD_NOTIFICATION',
-            payload: {
-              id: Date.now() + Math.random(),
-              type: 'collab_invite',
-              message: `@${invite.from} invited you to collaborate${invite.projectTitle ? ` on "${invite.projectTitle}"` : ''}`,
-              read: false,
-              createdAt: new Date().toISOString(),
-            },
-          })
-        })
-        localStorage.removeItem(inboxKey)
-      } catch { /* malformed */ }
-    }
-
-    // Drain any invites that arrived while this user was away / logged out
-    processInbox()
-
-    // Receive real-time invites from other tabs
-    const handleStorage = (e) => { if (e.key === inboxKey) processInbox() }
-    window.addEventListener('storage', handleStorage)
-    return () => window.removeEventListener('storage', handleStorage)
-  }, [state.profile.username, authUser?.username])
+  // ── Cross-tab localStorage inbox removed ─────────────────────────────────
+  // Collab requests are now delivered exclusively via the backend:
+  // GET /api/requests?to=<userId> fetches all pending requests on load.
+  // Recipients see them in the Collab Requests panel and must Accept/Decline.
+  // This prevents auto-adding projects without the recipient's consent.
 
   // Apply dark / light class on <html>
   useEffect(() => {
